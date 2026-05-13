@@ -24,8 +24,8 @@ open http://localhost:3000
 ```
 
 LLM provider, model, sampling parameters, and the active profile are managed
-from **Settings > LLM Settings** in the web UI. The `ZAI_*` env vars only seed a
-first-run default if no profile exists yet.
+from **Settings > LLM Connections** in the web UI. The `ZAI_*` env vars only
+seed a first-run default if no profile exists yet.
 
 ## Essential environment
 

@@ -29,10 +29,17 @@ The friendliest path is the **launcher** — two files, no terminal required.
 ```bash
 docker run -d --name psycheros -p 3000:3000 \
   -e ZAI_API_KEY=<key> \
+  -e PSYCHEROS_MCP_ENABLED=true \
   -v psycheros-data:/app/packages/psycheros/.psycheros \
   -v entity-core-data:/app/packages/entity-core/data \
   ghcr.io/psycherosai/psycheros:latest
 ```
+
+`PSYCHEROS_MCP_ENABLED=true` is the default; setting it explicitly is
+defensive. Full env-var reference is
+[`packages/psycheros/.env.example`](packages/psycheros/.env.example) —
+optional knobs for the LLM endpoint, RAG, web search, Discord, image
+generation, etc.
 
 ### From source
 
