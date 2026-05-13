@@ -1,14 +1,22 @@
 name: release
 
 on:
-  # Manual-only by design. Dispatch against a tag ref — `github.ref_name`
-  # resolves to the chosen tag, which the per-package jobs below gate on.
+  # Auto-fire on signed annotated *-v* tags. Each per-package job below
+  # gates on its own prefix via `if: startsWith(github.ref_name, 'X-v')`,
+  # so a single tag push runs exactly the matching job. workflow_dispatch
+  # is kept for retries or out-of-band re-runs.
   #
   # Supported tag prefixes (independent version lineages):
   #   launcher-vX.Y.Z      → launcher bundle (zip + tarball + raw files)
   #   entity-core-vX.Y.Z   → source tarball of packages/entity-core/
   #   entity-loom-vX.Y.Z   → source tarball of packages/entity-loom/
   #   psycheros-vX.Y.Z     → notes-only (container built by docker.yml)
+  push:
+    tags:
+      - "launcher-v*"
+      - "entity-core-v*"
+      - "entity-loom-v*"
+      - "psycheros-v*"
   workflow_dispatch:
 
 permissions:
