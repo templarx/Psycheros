@@ -1,9 +1,15 @@
 name: docker
 
 on:
-  # Manual-only by design. Re-enable automatic triggers (push to main,
-  # version tags) only after the operator has decided what should auto-
-  # run on what surface.
+  # Auto-fire on signed annotated psycheros-v* tags. Cutting a tag is the
+  # release decision; rebuilding the image to match is the mechanical
+  # consequence. Without this, source fixes on public:main reach readers
+  # immediately but image consumers (the recommended surface in the README's
+  # Docker block) keep pulling stale bits until the operator remembers to
+  # manually dispatch — which has historically meant "fix sits unshipped."
+  push:
+    tags:
+      - "psycheros-v*"
   workflow_dispatch:
     inputs:
       tag:
