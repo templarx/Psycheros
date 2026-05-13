@@ -24,7 +24,7 @@ permissions:
 
 jobs:
   launcher:
-    if: startsWith(github.ref_name, 'launcher-v')
+    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'launcher-v')
     name: launcher
     runs-on: ubuntu-latest
     steps:
@@ -71,7 +71,7 @@ jobs:
             packages/launcher/run.ps1
 
   entity-core:
-    if: startsWith(github.ref_name, 'entity-core-v')
+    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'entity-core-v')
     name: entity-core
     runs-on: ubuntu-latest
     steps:
@@ -105,7 +105,7 @@ jobs:
             "bundle/${REF}.zip"
 
   entity-loom:
-    if: startsWith(github.ref_name, 'entity-loom-v')
+    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'entity-loom-v')
     name: entity-loom
     runs-on: ubuntu-latest
     steps:
@@ -139,7 +139,7 @@ jobs:
             "bundle/${REF}.zip"
 
   psycheros-notes:
-    if: startsWith(github.ref_name, 'psycheros-v')
+    if: github.repository == 'PsycherosAI/Psycheros' && startsWith(github.ref_name, 'psycheros-v')
     name: psycheros-notes
     runs-on: ubuntu-latest
     steps:

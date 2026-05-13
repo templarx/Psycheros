@@ -26,6 +26,13 @@ env:
 
 jobs:
   build:
+    # Repo-gate: this workflow file lives in both Psycheros-staging (where it
+    # came from) and PsycherosAI/Psycheros (where the squash carries it).
+    # Only the public repo's tag pushes should actually build + push to the
+    # public `psycheros` package. If a tag accidentally lands on staging
+    # (e.g. `git push origin --tags` from the staging worktree), the workflow
+    # fires here too but every job no-ops.
+    if: github.repository == 'PsycherosAI/Psycheros'
     name: ${{ matrix.image }}
     runs-on: ubuntu-latest
     strategy:
