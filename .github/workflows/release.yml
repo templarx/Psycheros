@@ -143,6 +143,15 @@ jobs:
     name: psycheros-notes
     runs-on: ubuntu-latest
     steps:
+      # `gh release create --generate-notes --verify-tag` shells out to git
+      # to enumerate commits + resolve the tag SHA. Without a checkout the
+      # runner has no .git, and the create step fails with
+      # "fatal: not a git repository". The other per-package jobs above all
+      # checkout for asset staging, so this job was the only one that hit
+      # the failure mode (first observed on psycheros-v0.1.2 auto-fire,
+      # 2026-05-13). Keep this step even though the job uploads no assets.
+      - uses: actions/checkout@v6
+
       # psycheros is the harness lineage and claims the Latest badge for the
       # repo. Same auto-bootstrap pattern as the other jobs, but with
       # --latest=true. The actual image push is docker.yml's job; this
