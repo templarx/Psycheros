@@ -7,6 +7,7 @@ All notable changes to entity-loom are documented here. The format follows
 ## [0.3.1] - 2026-05-14
 
 ### Changed
+
 - Code formatting refreshed (deno fmt).
 
 ## [0.3.0] - 2026-05-13
