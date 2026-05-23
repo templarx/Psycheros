@@ -4,6 +4,24 @@ All notable changes to entity-core are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this package follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.3] - 2026-05-23
+
+### Added
+
+- Embedding chunking: long memories (>3000 chars) are now split into overlapping
+  ~2048-char chunks, each embedded independently, improving recall on detailed
+  memories.
+- `scripts/rebuild-embedding-cache.ts` for backfilling chunked embeddings from
+  an existing memory store.
+- LLM client retry with exponential backoff (configurable via `maxRetries`).
+- Automatic `max_completion_tokens` selection for OpenAI o-series and gpt-5.x
+  models.
+
+### Changed
+
+- EmbeddingCache schema migrated to v2 with `parent_key`, `chunk_index`, and
+  `total_chunks` columns. Existing v1 caches are auto-migrated on first boot.
+
 ## [0.2.2] - 2026-05-14
 
 ### Changed
@@ -94,5 +112,7 @@ All notable changes to entity-core are documented here. The format follows
 - Knowledge graph (people, places, relationships) backed by SQLite + sqlite-vec.
 - Snapshot system: pre-destructive-operation snapshots for recovery.
 
+[0.2.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.2.3
+[0.2.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.2.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.1.0

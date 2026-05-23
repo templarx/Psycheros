@@ -4,6 +4,12 @@ All notable changes to Psycheros Launcher are documented here. The format
 follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-05-23
+
+### Changed
+
+- Marked v1 launcher as deprecated in README; new users directed to launcher-v2.
+
 ## [0.2.1] - 2026-05-14
 
 ### Changed
@@ -79,6 +85,7 @@ follows [Semantic Versioning](https://semver.org/).
 - Bundled archives (`launcher-v<version>.zip` / `.tar.gz`) for users who prefer
   a single archive over individual file downloads.
 
+[0.2.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/launcher-v0.2.2
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/launcher-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/launcher-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/launcher-v0.1.0

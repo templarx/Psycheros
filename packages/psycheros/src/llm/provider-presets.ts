@@ -103,7 +103,7 @@ export interface LLMProviderPreset {
 export const LLM_PROVIDER_PRESETS: Record<LLMProvider, LLMProviderPreset> = {
   zai: {
     label: "Z.ai",
-    baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
+    baseUrl: "https://api.z.ai/api/paas/v4/chat/completions",
     defaultModel: "glm-4.7",
     defaultWorkerModel: "GLM-4.5-Air",
     supportsThinking: true,

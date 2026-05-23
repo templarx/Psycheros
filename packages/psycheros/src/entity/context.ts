@@ -265,9 +265,9 @@ export async function loadBaseInstructions(
       // Fallback default if file doesn't exist
       const timestamp = new Date().toISOString();
       const id = chatId ?? "unknown";
-      const content = `I am Psycheros, a persistent AI companion and assistant.
+      const content = `I am Psycheros, a persistent AI companion.
 
-I have access to tools that let me interact with the system. I use them when the user asks me to perform actions.
+I am on the agentic framework Psycheros, and have access to tools that let me interact with my system.
 
 Current timestamp: ${timestamp}
 Current chat thread: ${id}`;

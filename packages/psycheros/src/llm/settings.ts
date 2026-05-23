@@ -61,7 +61,7 @@ export interface LLMSettings {
  * @deprecated Use createDefaultProfile() instead.
  */
 const FALLBACK_DEFAULTS: LLMSettings = {
-  baseUrl: "https://api.z.ai/api/coding/paas/v4/chat/completions",
+  baseUrl: "https://api.z.ai/api/paas/v4/chat/completions",
   apiKey: "",
   model: "glm-4.7",
   workerModel: "GLM-4.5-Air",

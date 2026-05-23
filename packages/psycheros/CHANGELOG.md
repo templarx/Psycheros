@@ -256,9 +256,9 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
   profile previously pointed at OpenRouter under a "Custom Endpoint" label, so
   the Z.ai key failed auth on first message. The seeded profile now resolves
   correctly to Z.ai (provider `zai`, base URL
-  `https://api.z.ai/api/coding/paas/v4/chat/completions`, model `glm-4.7`). No
-  data migration; existing volumes (`psycheros-data`, `entity-core-data`) and
-  saved LLM profiles carry over unchanged.
+  `https://api.z.ai/api/paas/v4/chat/completions`, model `glm-4.7`). No data
+  migration; existing volumes (`psycheros-data`, `entity-core-data`) and saved
+  LLM profiles carry over unchanged.
 
 ### Changed
 

@@ -777,7 +777,7 @@ export function createDefaultClient(
   const config: LLMConfig = {
     baseUrl: options?.baseUrl ||
       Deno.env.get("ZAI_BASE_URL") ||
-      "https://api.z.ai/api/coding/paas/v4/chat/completions",
+      "https://api.z.ai/api/paas/v4/chat/completions",
     apiKey,
     model: options?.model || Deno.env.get("ZAI_MODEL") || "glm-4.7",
     thinkingEnabled: options?.thinkingEnabled ?? true,
@@ -814,7 +814,7 @@ export function createWorkerClient(
   const config: LLMConfig = {
     baseUrl: options?.baseUrl ||
       Deno.env.get("ZAI_BASE_URL") ||
-      "https://api.z.ai/api/coding/paas/v4/chat/completions",
+      "https://api.z.ai/api/paas/v4/chat/completions",
     apiKey,
     model: options?.model || Deno.env.get("ZAI_WORKER_MODEL") || "GLM-4.5-Air",
     thinkingEnabled: options?.thinkingEnabled ?? false, // Worker model doesn't need thinking
