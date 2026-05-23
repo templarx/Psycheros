@@ -74,14 +74,14 @@ service regardless. The launcher is just a window onto it.
 If you were running the v1 launcher (a browser dashboard at `localhost:3001`)
 and want to bring your existing entity over:
 
-1. **Export from v1 first.** In v1's chat UI, go to **Settings → Admin → Entity
-   Data → Export** and save the `.zip`.
+1. **Export from v1 first.** In v1's chat UI, go to **Settings → System Admin →
+   Entity Data → Export** and save the `.zip`.
 2. Install the v2 launcher (steps above).
 3. Complete v2's welcome wizard and click **Install autostart** — a fresh empty
    entity comes up.
-4. In v2's chat UI, go to **Settings → Admin → Entity Data → Import** and select
-   the `.zip` from step 1. The daemon restarts and your migrated entity takes
-   over.
+4. In v2's chat UI, go to **Settings → System Admin → Entity Data → Import** and
+   select the `.zip` from step 1. The daemon restarts and your migrated entity
+   takes over.
 
 ## Updating
 
@@ -110,7 +110,8 @@ manager for errors.
 only happens once.
 
 **Entity Loom (import wizard).** To import chat histories from other platforms,
-open the Psycheros chat UI and go to **Settings → Admin → Entity Loom**. See the
+start Entity Loom separately (`deno task start` inside `packages/entity-loom/`)
+and open `http://localhost:3210`. See the
 [Entity Loom user guide](/Psycheros/entity-loom/user-guide/) for details.
 
 ## When not to use the launcher
