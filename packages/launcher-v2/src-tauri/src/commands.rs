@@ -657,17 +657,19 @@ fn run_first_run_blocking(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// Resolve a sidecar binary that ships as a Tauri `externalBin`. Tauri
-/// stages these under the basename of the config entry in the runtime
-/// resource dir — for `"binaries/deno"` the file lands as `deno` (or
-/// `deno.exe` on Windows). Some prod packaging keeps the
-/// `<basename>-<triple>` suffix instead, so we try the basename first
-/// (the common case) and the triple-suffixed forms as fallbacks.
+/// Resolve a sidecar binary that ships as a Tauri `externalBin`.
 ///
-/// In dev mode (`cargo tauri dev`) the sidecar is staged into a
-/// `target/debug` adjacent directory by Tauri's tooling; the resource-
-/// path resolver picks it up via the same `BaseDirectory::Resource`
-/// lookup.
+/// Tauri 2 places sidecars in different locations depending on platform
+/// and build mode:
+///   - macOS bundled (.app): `Contents/MacOS/<basename>` — NOT in
+///     `Contents/Resources/`
+///   - macOS dev (`cargo tauri dev`): next to the debug binary in
+///     `target/debug/`
+///   - Windows bundled: alongside the main `.exe`
+///
+/// We try multiple resolution strategies in order: Tauri's Resource
+/// directory, the current executable's parent, and the executable's
+/// parent walked up to the `.app` bundle root's `Contents/MacOS/`.
 fn resolve_sidecar_binary(
     app: &AppHandle,
     basename: &str,
@@ -681,28 +683,32 @@ fn resolve_sidecar_binary(
             std::env::consts::ARCH,
         ));
     }
-    let exe = if cfg!(windows) { ".exe" } else { "" };
+    let exe_suffix = if cfg!(windows) { ".exe" } else { "" };
     let mut candidates: Vec<String> = vec![
-        format!("{basename}{exe}"),
-        format!("{basename}-{triple}{exe}"),
-        format!("binaries/{basename}{exe}"),
-        format!("binaries/{basename}-{triple}{exe}"),
+        format!("{basename}{exe_suffix}"),
+        format!("{basename}-{triple}{exe_suffix}"),
+        format!("binaries/{basename}{exe_suffix}"),
+        format!("binaries/{basename}-{triple}{exe_suffix}"),
     ];
     candidates.extend(extra_candidates.iter().map(|s| s.to_string()));
 
-    // Check the Tauri Resource directory first (Contents/Resources/ on macOS).
-    for name in &candidates {
-        if let Ok(p) = app.path().resolve(name, BaseDirectory::Resource) {
+    let mut checked_dirs: Vec<String> = Vec::new();
+
+    // Strategy 1: Tauri's Resource directory (Contents/Resources/ on macOS,
+    // or target/debug/ in dev mode).
+    if let Ok(resource_dir) = app.path().resolve("", BaseDirectory::Resource) {
+        for name in &candidates {
+            let p = resource_dir.join(name);
             if p.exists() {
                 return Ok(p);
             }
         }
+        checked_dirs.push(resource_dir.display().to_string());
     }
 
-    // Fallback: Tauri 2 on macOS places externalBin sidecars in
-    // Contents/MacOS/ (next to the main executable), NOT in
-    // Contents/Resources/.  Resolve relative to the current executable
-    // to catch this case.
+    // Strategy 2: current executable's parent directory. On macOS bundled
+    // apps, the exe is at Contents/MacOS/<app-name>, so the parent is
+    // Contents/MacOS/ where Tauri 2 actually places sidecars.
     if let Ok(current_exe) = std::env::current_exe() {
         if let Some(exe_dir) = current_exe.parent() {
             for name in &candidates {
@@ -711,11 +717,38 @@ fn resolve_sidecar_binary(
                     return Ok(p);
                 }
             }
+            checked_dirs.push(exe_dir.display().to_string());
+
+            // Strategy 3: on macOS, if the exe is deep inside a .app bundle
+            // (e.g. after translocation), walk up to find Contents/MacOS/.
+            // Normal path: <bundle>/Contents/MacOS/<app> — parent is already
+            // Contents/MacOS/ (handled above).  Translocated or unusual
+            // layouts may nest deeper.
+            let mut dir = exe_dir.to_path_buf();
+            while let Some(parent) = dir.parent() {
+                if parent.file_name().is_some_and(|n| n == "Contents")
+                    && dir.file_name().is_some_and(|n| n == "MacOS")
+                {
+                    for name in &candidates {
+                        let p = dir.join(name);
+                        if p.exists() {
+                            return Ok(p);
+                        }
+                    }
+                    checked_dirs.push(dir.display().to_string());
+                    break;
+                }
+                dir = parent.to_path_buf();
+            }
         }
     }
 
     Err(format!(
-        "bundled {basename} sidecar not found in app resources (checked: {})",
+        "bundled {basename} sidecar not found \
+         (version {}, triple={triple}, checked dirs: [{}], \
+         candidates: [{}])",
+        env!("CARGO_PKG_VERSION"),
+        checked_dirs.join(", "),
         candidates.join(", "),
     ))
 }
