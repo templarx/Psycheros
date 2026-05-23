@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-23
+
+### Fixed
+
+- Chat history and knowledge graph data imports no longer fail on larger files
+  due to the 1 MB request-body cap. The chat and graph migration endpoints are
+  now whitelisted as upload routes alongside memories and entity data.
+
 ## [0.4.1] - 2026-05-23
 
 ### Fixed
@@ -295,3 +303,4 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.4.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.2

@@ -1595,6 +1595,8 @@ export class Server {
         const isUpload = path === "/api/backgrounds" ||
           path === "/api/chat-attachments" || path === "/api/anchor-images" ||
           path === "/api/admin/data-migration/memories" ||
+          path === "/api/admin/data-migration/chats" ||
+          path === "/api/admin/data-migration/graph" ||
           path === "/api/admin/entity-data/import";
         const limit = isUpload ? MAX_UPLOAD_BODY_SIZE : MAX_REQUEST_BODY_SIZE;
         if (size > limit) {
