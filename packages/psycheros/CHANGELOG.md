@@ -6,6 +6,16 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-05-24
+
+### Fixed
+
+- Core prompt files now populate correctly in Docker images. The `.dockerignore`
+  pattern `**/identity` was too broad — it excluded `templates/identity/` from
+  the build context, so neither `src/init/mod.ts` nor `entrypoint.sh` could find
+  template files to seed. The same issue affected `templates/custom-tools/`.
+  Both directories are now re-included with negation rules.
+
 ## [0.4.2] - 2026-05-23
 
 ### Fixed
@@ -303,4 +313,5 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.4.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.3
 [0.4.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.2

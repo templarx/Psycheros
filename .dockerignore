@@ -35,8 +35,10 @@ Thumbs.db
 **/.loom-exports
 **/.snapshots
 **/identity
+!**/templates/identity
 **/memories
 **/custom-tools
+!**/templates/custom-tools
 **/backgrounds
 
 # SQLite runtime files

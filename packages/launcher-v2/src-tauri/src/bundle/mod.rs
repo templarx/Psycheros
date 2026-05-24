@@ -35,8 +35,11 @@ use crate::proc::hidden_command;
 pub enum BundleError {
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
-    #[error("deno cache failed ({0})")]
-    DenoCache(ExitStatus),
+    #[error("deno cache failed ({status})\n{stderr_tail}")]
+    DenoCache {
+        status: ExitStatus,
+        stderr_tail: String,
+    },
     #[error("git {op} failed ({status})")]
     Git {
         op: &'static str,
@@ -213,17 +216,29 @@ pub fn warm_deno_cache(
 
     // `deno cache` writes progress exclusively to stderr; stdout stays
     // empty, so draining stderr serially (no second thread) is enough.
+    // Keep a rolling window of the last N lines so the error includes
+    // the actual deno diagnostics instead of just the exit code.
+    const STDERR_TAIL_LEN: usize = 15;
+    let mut tail: Vec<String> = Vec::with_capacity(STDERR_TAIL_LEN);
+
     if let Some(stderr) = child.stderr.take() {
         let reader = BufReader::new(stderr);
         for line in reader.lines() {
             let line = line?;
             on_line(&line);
+            if tail.len() >= STDERR_TAIL_LEN {
+                tail.remove(0);
+            }
+            tail.push(line);
         }
     }
 
     let status = child.wait()?;
     if !status.success() {
-        return Err(BundleError::DenoCache(status));
+        return Err(BundleError::DenoCache {
+            status,
+            stderr_tail: tail.join("\n"),
+        });
     }
     Ok(())
 }
@@ -492,7 +507,7 @@ mod tests {
         std::fs::create_dir_all(&source).unwrap();
 
         let result = warm_deno_cache(&fake, &source, |_| {});
-        assert!(matches!(result, Err(BundleError::DenoCache(_))));
+        assert!(matches!(result, Err(BundleError::DenoCache { .. })));
     }
 
     // --- clone_or_fetch_source: tests against a local "remote" repo --------

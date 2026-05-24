@@ -7,6 +7,14 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-05-24
+
+### Fixed
+
+- `warm_deno_cache` error now includes the last 15 lines of `deno cache` stderr
+  output so the actual diagnostic (missing native binary, network failure,
+  lifecycle-script error, etc.) is visible instead of just the exit code.
+
 ## [0.2.2] - 2026-05-23
 
 ### Fixed
