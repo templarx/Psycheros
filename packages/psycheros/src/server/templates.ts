@@ -2075,6 +2075,34 @@ export function renderFileList(
       </div>`;
   }
 
+  // All categories get an "Upload File" button
+  const uploadFileHtml = `
+    <details class="settings-upload-details" style="margin-bottom: 12px;">
+      <summary class="btn btn--ghost btn--sm" style="cursor: pointer;">Upload File</summary>
+      <div class="settings-upload-form" style="margin-top: 8px; display: flex; flex-direction: column; gap: 8px;">
+        <input
+          type="text"
+          class="settings-create-file-input"
+          id="upload-filename-input"
+          placeholder="File name (e.g., base_instructions.md)"
+          style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--fg); font-family: inherit; font-size: 13px;"
+        />
+        <textarea
+          id="upload-content-input"
+          placeholder="Paste file content here..."
+          rows="5"
+          style="padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--input-bg); color: var(--fg); resize: vertical; font-family: inherit; font-size: 13px;"
+        ></textarea>
+        <button
+          class="btn btn--primary btn--sm"
+          onclick="Psycheros.uploadIdentityFile('${directory}')"
+          style="align-self: flex-end;"
+        >
+          Upload
+        </button>
+      </div>
+    </details>`;
+
   const fileListHtml = files.length === 0
     ? `<div class="settings-empty">${
       isCustom
@@ -2116,7 +2144,7 @@ export function renderFileList(
   // OOB swap to update active tab
   const oobSwap = renderTabActiveState(directory);
 
-  return createFileHtml + fileListHtml + oobSwap;
+  return createFileHtml + uploadFileHtml + fileListHtml + oobSwap;
 }
 
 /**
@@ -2762,9 +2790,7 @@ export function renderMemoryEditor(
 
   const deleteBtnHtml = granularity === "significant"
     ? `<button class="btn btn--sm btn--danger"
-        hx-delete="/api/memories/significant/${encodeURIComponent(date)}"
-        hx-confirm="Delete this memory? This cannot be undone."
-        hx-on::after-request="if(event.detail.successful) htmx.ajax('GET','/fragments/settings/memories/significant',{target:'#settings-content',swap:'innerHTML'})"
+        onclick="Psycheros.deleteSignificantMemory('${escapeHtml(date)}')"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
         Delete

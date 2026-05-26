@@ -10,6 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { join } from "@std/path";
 import type { Granularity } from "../memory/types.ts";
+import { getBroadcaster } from "../server/broadcaster.ts";
 
 /**
  * Read the entity-core child's PID out of the MCP SDK's StdioClientTransport.
@@ -155,6 +156,16 @@ export class MCPClient {
   private pingTimer: number | null = null;
   private pingInterval = 30000; // 30 seconds
   private wasAlive = true;
+  private toolCallTimeoutMs = 30_000; // 30 seconds default for tool calls
+  private pingTimeoutMs = 5_000; // 5 seconds for health probes
+  /**
+   * Auto-reconnect state. When the health ping detects entity-core is
+   * dead, the watchdog schedules a restart with exponential backoff.
+   */
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectBaseDelayMs = 5_000; // doubles each attempt
+  private isReconnecting = false;
   /**
    * Scheduler used to durably enqueue identity-push jobs. Injected after
    * construction by the server (the scheduler is created later in the
@@ -177,6 +188,53 @@ export class MCPClient {
     scheduler: import("../scheduler/mod.ts").Scheduler,
   ): void {
     this.scheduler = scheduler;
+  }
+
+  /**
+   * Call an MCP tool with a timeout. If entity-core hangs, the call
+   * rejects after `timeoutMs` instead of blocking forever.
+   */
+  private async callToolWithTimeout(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs?: number,
+  ): Promise<unknown> {
+    if (!this.client) throw new Error("[MCP] Not connected");
+    const ms = timeoutMs ?? this.toolCallTimeoutMs;
+    const result = await Promise.race([
+      this.client.callTool({ name, arguments: args }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `[MCP] Tool call '${name}' timed out after ${ms}ms`,
+              ),
+            ),
+          ms,
+        )
+      ),
+    ]);
+    return result;
+  }
+
+  /**
+   * Broadcast an MCP status event to all connected SSE clients so the
+   * UI can surface reconnection state to the user.
+   */
+  private broadcastMcpStatus(status: {
+    connected: boolean;
+    alive: boolean;
+    reconnecting: boolean;
+    attempt?: number;
+    maxAttempts?: number;
+    message?: string;
+  }): void {
+    try {
+      getBroadcaster().broadcastEvent("mcp_status", status, null);
+    } catch {
+      // Broadcaster not initialized yet (early startup) — ignore
+    }
   }
 
   /**
@@ -268,8 +326,17 @@ export class MCPClient {
 
   /**
    * Connect to the MCP server.
+   *
+   * @param options.skipSync - Skip the initial identity pull after
+   *   connecting. Useful when reconnecting after a direct DB write
+   *   (e.g. graph import) where entity-core may still be initialising
+   *   and a premature pull could race with startup.
    */
-  async connect(): Promise<boolean> {
+  async connect(options?: { skipSync?: boolean }): Promise<boolean> {
+    // Reset reconnect state for a fresh connection attempt.
+    this.reconnectAttempts = 0;
+    this.isReconnecting = false;
+
     try {
       this.intentionalClose = false;
       await this.reapOrphanChild();
@@ -305,8 +372,11 @@ export class MCPClient {
         `[MCP] Connected to entity-core as ${this.config.instanceId}`,
       );
 
-      // Pull initial state if configured
-      if (this.config.syncOnStartup) {
+      // Pull initial state if configured and not explicitly skipped.
+      // Skipping is useful when reconnecting after a direct DB write
+      // (e.g. graph import) where entity-core may still be initializing
+      // and a premature pull could race with startup.
+      if (this.config.syncOnStartup && !options?.skipSync) {
         await this.pull();
       }
 
@@ -377,6 +447,10 @@ export class MCPClient {
   async restart(newEnv?: Record<string, string>): Promise<boolean> {
     console.log("[MCP] Restarting entity-core connection...");
 
+    // Manual restart always gets a fresh attempt budget.
+    this.reconnectAttempts = 0;
+    this.isReconnecting = false;
+
     // Update env vars if provided
     if (newEnv) {
       this.config.env = { ...this.config.env, ...newEnv };
@@ -421,7 +495,7 @@ export class MCPClient {
   async ping(): Promise<boolean> {
     if (!this.client) return false;
     try {
-      await this.client.callTool({ name: "sync_status", arguments: {} });
+      await this.callToolWithTimeout("sync_status", {}, this.pingTimeoutMs);
       this.lastPingSuccess = new Date();
       return true;
     } catch {
@@ -434,6 +508,7 @@ export class MCPClient {
   /**
    * Start periodic health pings to entity-core.
    * Only logs state transitions to avoid flooding the log ring buffer.
+   * When entity-core dies, triggers automatic reconnection with backoff.
    */
   private startHealthPing(intervalMs = 30000): void {
     this.pingInterval = intervalMs;
@@ -443,12 +518,95 @@ export class MCPClient {
       const ok = await this.ping();
       if (ok && !this.wasAlive) {
         this.wasAlive = true;
+        this.reconnectAttempts = 0;
         console.error("[MCP] Entity-core is responsive again");
+        this.broadcastMcpStatus({
+          connected: true,
+          alive: true,
+          reconnecting: false,
+          message: "Entity-core reconnected",
+        });
       } else if (!ok && this.wasAlive) {
         this.wasAlive = false;
         console.error("[MCP] Entity-core is not responding to pings");
+        this.broadcastMcpStatus({
+          connected: false,
+          alive: false,
+          reconnecting: false,
+          message:
+            "Entity-core disconnected — attempting automatic reconnect\u2026",
+        });
+        this.scheduleReconnect();
       }
     }, intervalMs);
+  }
+
+  /**
+   * Schedule an automatic reconnection attempt with exponential backoff.
+   * Caps at maxReconnectAttempts to avoid restart storms. A successful
+   * ping or manual restart resets the counter.
+   */
+  private scheduleReconnect(): void {
+    if (this.isReconnecting) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(
+        `[MCP] Max reconnect attempts (${this.maxReconnectAttempts}) reached. ` +
+          "Entity-core requires manual intervention.",
+      );
+      this.broadcastMcpStatus({
+        connected: false,
+        alive: false,
+        reconnecting: false,
+        attempt: this.maxReconnectAttempts,
+        maxAttempts: this.maxReconnectAttempts,
+        message:
+          `Entity-core could not be recovered after ${this.maxReconnectAttempts} attempts. Restart required.`,
+      });
+      return;
+    }
+
+    const delay = this.reconnectBaseDelayMs *
+      Math.pow(2, this.reconnectAttempts);
+    const attempt = this.reconnectAttempts + 1;
+    console.log(
+      `[MCP] Reconnect attempt ${attempt}/${this.maxReconnectAttempts} in ${delay}ms`,
+    );
+
+    this.isReconnecting = true;
+    this.broadcastMcpStatus({
+      connected: false,
+      alive: false,
+      reconnecting: true,
+      attempt,
+      maxAttempts: this.maxReconnectAttempts,
+      message:
+        `Reconnecting to entity-core (attempt ${attempt}/${this.maxReconnectAttempts})\u2026`,
+    });
+
+    setTimeout(async () => {
+      try {
+        const ok = await this.restart();
+        if (ok) {
+          this.reconnectAttempts = 0;
+          console.log("[MCP] Auto-reconnect succeeded");
+        } else {
+          this.reconnectAttempts++;
+          console.error(
+            `[MCP] Auto-reconnect attempt ${attempt} failed`,
+          );
+        }
+      } catch (err) {
+        this.reconnectAttempts++;
+        console.error(
+          `[MCP] Auto-reconnect attempt ${attempt} threw:`,
+          err instanceof Error ? err.message : err,
+        );
+      } finally {
+        this.isReconnecting = false;
+        // If still dead after this attempt, scheduleReconnect will be
+        // called again by the next ping cycle that detects failure.
+      }
+    }, delay);
   }
 
   /**
@@ -458,11 +616,17 @@ export class MCPClient {
     lastPingSuccess: string | null;
     lastPingAttempt: string | null;
     alive: boolean;
+    reconnecting: boolean;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number;
   } {
     return {
       lastPingSuccess: this.lastPingSuccess?.toISOString() ?? null,
       lastPingAttempt: this.lastPingAttempt?.toISOString() ?? null,
       alive: this.isAlive(),
+      reconnecting: this.isReconnecting,
+      reconnectAttempts: this.reconnectAttempts,
+      maxReconnectAttempts: this.maxReconnectAttempts,
     };
   }
 
@@ -485,11 +649,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "sync_pull",
-        arguments: {
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("sync_pull", {
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -564,17 +725,6 @@ export class MCPClient {
         await Deno.mkdir(dir, { recursive: true });
       } catch { /* already exists */ }
 
-      // Clear stale files before writing — always run, even when the
-      // category has no canonical files, so leftovers from a broken import
-      // or a deleted identity file get removed
-      try {
-        for await (const entry of Deno.readDir(dir)) {
-          if (entry.isFile && entry.name.endsWith(".md")) {
-            await Deno.remove(`${dir}/${entry.name}`);
-          }
-        }
-      } catch { /* directory may not exist yet */ }
-
       for (const file of files) {
         try {
           await Deno.writeTextFile(`${dir}/${file.filename}`, file.content);
@@ -610,23 +760,20 @@ export class MCPClient {
       throw new Error("[MCP] Not connected to entity-core");
     }
 
-    const result = await this.client.callTool({
-      name: "sync_push",
-      arguments: {
-        instance: {
-          id: this.config.instanceId,
-          type: "psycheros",
-          version: 1,
-        },
-        identityChanges: [{
-          category,
-          filename,
-          content,
-          version: 1,
-          lastModified: new Date().toISOString(),
-          modifiedBy: this.config.instanceId,
-        }],
+    const result = await this.callToolWithTimeout("sync_push", {
+      instance: {
+        id: this.config.instanceId,
+        type: "psycheros",
+        version: 1,
       },
+      identityChanges: [{
+        category,
+        filename,
+        content,
+        version: 1,
+        lastModified: new Date().toISOString(),
+        modifiedBy: this.config.instanceId,
+      }],
     });
 
     const textContent = extractTextContent(result);
@@ -689,17 +836,14 @@ export class MCPClient {
     // Try to push to entity-core if connected
     if (this.client) {
       try {
-        const result = await this.client.callTool({
-          name: "sync_push",
-          arguments: {
-            instance: {
-              id: this.config.instanceId,
-              type: "psycheros",
-              version: 1,
-            },
-            identityChanges: [change],
-            memoryChanges: [],
+        const result = await this.callToolWithTimeout("sync_push", {
+          instance: {
+            id: this.config.instanceId,
+            type: "psycheros",
+            version: 1,
           },
+          identityChanges: [change],
+          memoryChanges: [],
         });
 
         const textContent = extractTextContent(result);
@@ -767,14 +911,11 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_append",
-        arguments: {
-          category,
-          filename,
-          content,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("identity_append", {
+        category,
+        filename,
+        content,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -817,14 +958,11 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_prepend",
-        arguments: {
-          category,
-          filename,
-          content,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("identity_prepend", {
+        category,
+        filename,
+        content,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -867,15 +1005,12 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_update_section",
-        arguments: {
-          category,
-          filename,
-          section,
-          content,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("identity_update_section", {
+        category,
+        filename,
+        section,
+        content,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -918,16 +1053,16 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_rewrite_section",
-        arguments: {
+      const result = await this.callToolWithTimeout(
+        "identity_rewrite_section",
+        {
           category,
           filename,
           section,
           content,
           instanceId: this.config.instanceId,
         },
-      });
+      );
 
       const textContent = extractTextContent(result);
       if (textContent) {
@@ -964,9 +1099,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_get_meta",
-        arguments: { category },
+      const result = await this.callToolWithTimeout("identity_get_meta", {
+        category,
       });
 
       const textContent = extractTextContent(result);
@@ -996,9 +1130,10 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_set_meta",
-        arguments: { category, filename, promptLabel },
+      const result = await this.callToolWithTimeout("identity_set_meta", {
+        category,
+        filename,
+        promptLabel,
       });
 
       const textContent = extractTextContent(result);
@@ -1027,11 +1162,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "identity_delete_custom",
-        arguments: {
-          filename,
-        },
+      const result = await this.callToolWithTimeout("identity_delete_custom", {
+        filename,
       });
 
       const textContent = extractTextContent(result);
@@ -1161,16 +1293,13 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "memory_create",
-        arguments: {
-          granularity,
-          date,
-          content,
-          chatIds,
-          instanceId: this.config.instanceId,
-          ...(slug ? { slug } : {}),
-        },
+      const result = await this.callToolWithTimeout("memory_create", {
+        granularity,
+        date,
+        content,
+        chatIds,
+        instanceId: this.config.instanceId,
+        ...(slug ? { slug } : {}),
       });
 
       // Check for MCP-level error
@@ -1211,12 +1340,9 @@ export class MCPClient {
   ): Promise<MemoryEntry | null> {
     if (this.client) {
       try {
-        const result = await this.client.callTool({
-          name: "memory_read",
-          arguments: {
-            granularity,
-            date,
-          },
+        const result = await this.callToolWithTimeout("memory_read", {
+          granularity,
+          date,
         });
 
         const r = result as Record<string, unknown>;
@@ -1252,6 +1378,7 @@ export class MCPClient {
     granularity: Granularity,
     date: string,
     content: string,
+    slug?: string,
   ): Promise<boolean> {
     if (!this.client) {
       console.error("[MCP] Not connected, cannot update memory");
@@ -1259,15 +1386,13 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "memory_update",
-        arguments: {
-          granularity,
-          date,
-          content,
-          editedBy: this.config.instanceId,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("memory_update", {
+        granularity,
+        date,
+        content,
+        editedBy: this.config.instanceId,
+        instanceId: this.config.instanceId,
+        ...(slug ? { slug } : {}),
       });
 
       const r = result as Record<string, unknown>;
@@ -1319,14 +1444,11 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "memory_search",
-        arguments: {
-          query,
-          instanceId: this.config.instanceId,
-          minScore: options?.minScore,
-          maxResults: options?.maxResults,
-        },
+      const result = await this.callToolWithTimeout("memory_search", {
+        query,
+        instanceId: this.config.instanceId,
+        minScore: options?.minScore,
+        maxResults: options?.maxResults,
       });
 
       const textContent = extractTextContent(result);
@@ -1361,15 +1483,12 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "memory_list",
-        arguments: {
-          ...(granularity ? { granularity } : {}),
-          limit,
-          ...(options?.offset !== undefined ? { offset: options.offset } : {}),
-          ...(options?.beforeDate ? { beforeDate: options.beforeDate } : {}),
-          ...(options?.afterDate ? { afterDate: options.afterDate } : {}),
-        },
+      const result = await this.callToolWithTimeout("memory_list", {
+        ...(granularity ? { granularity } : {}),
+        limit,
+        ...(options?.offset !== undefined ? { offset: options.offset } : {}),
+        ...(options?.beforeDate ? { beforeDate: options.beforeDate } : {}),
+        ...(options?.afterDate ? { afterDate: options.afterDate } : {}),
       });
 
       const textContent = extractTextContent(result);
@@ -1391,16 +1510,21 @@ export class MCPClient {
   /**
    * Delete a memory entry via MCP.
    */
-  async deleteMemory(granularity: Granularity, date: string): Promise<boolean> {
+  async deleteMemory(
+    granularity: Granularity,
+    date: string,
+    slug?: string,
+  ): Promise<boolean> {
     if (!this.client) {
       console.error("[MCP] Not connected, cannot delete memory");
       return false;
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "memory_delete",
-        arguments: { granularity, date },
+      const result = await this.callToolWithTimeout("memory_delete", {
+        granularity,
+        date,
+        ...(slug ? { slug } : {}),
       });
 
       const textContent = extractTextContent(result);
@@ -1448,10 +1572,7 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "snapshot_create",
-        arguments: {},
-      });
+      const result = await this.callToolWithTimeout("snapshot_create", {});
 
       const textContent = extractTextContent(result);
       if (textContent) {
@@ -1487,12 +1608,9 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "snapshot_list",
-        arguments: {
-          category: options?.category,
-          filename: options?.filename,
-        },
+      const result = await this.callToolWithTimeout("snapshot_list", {
+        category: options?.category,
+        filename: options?.filename,
       });
 
       const textContent = extractTextContent(result);
@@ -1519,11 +1637,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "snapshot_get",
-        arguments: {
-          snapshotId,
-        },
+      const result = await this.callToolWithTimeout("snapshot_get", {
+        snapshotId,
       });
 
       const textContent = extractTextContent(result);
@@ -1557,11 +1672,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "snapshot_restore",
-        arguments: {
-          snapshotId,
-        },
+      const result = await this.callToolWithTimeout("snapshot_restore", {
+        snapshotId,
       });
 
       const textContent = extractTextContent(result);
@@ -1602,10 +1714,7 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_stats",
-        arguments: {},
-      });
+      const result = await this.callToolWithTimeout("graph_stats", {});
 
       const textContent = extractTextContent(result);
       if (textContent) {
@@ -1628,10 +1737,7 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "sync_status",
-        arguments: {},
-      });
+      const result = await this.callToolWithTimeout("sync_status", {});
 
       const textContent = extractTextContent(result);
       if (textContent) {
@@ -1668,12 +1774,9 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_node_list",
-        arguments: {
-          type: options?.type,
-          limit: options?.limit ?? 500,
-        },
+      const result = await this.callToolWithTimeout("graph_node_list", {
+        type: options?.type,
+        limit: options?.limit ?? 500,
       });
 
       const textContent = extractTextContent(result);
@@ -1711,14 +1814,11 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_edge_get",
-        arguments: {
-          fromId: options?.fromId,
-          toId: options?.toId,
-          type: options?.type,
-          onlyValid: true,
-        },
+      const result = await this.callToolWithTimeout("graph_edge_get", {
+        fromId: options?.fromId,
+        toId: options?.toId,
+        type: options?.type,
+        onlyValid: true,
       });
 
       const textContent = extractTextContent(result);
@@ -1764,18 +1864,15 @@ export class MCPClient {
         }
       }
 
-      const result = await this.client.callTool({
-        name: "graph_node_create",
-        arguments: {
-          type: input.type,
-          label: input.label,
-          description: input.description,
-          properties: input.properties ?? {},
-          confidence: input.confidence ?? 0.5,
-          sourceMemoryId: input.sourceMemoryId,
-          embedding,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("graph_node_create", {
+        type: input.type,
+        label: input.label,
+        description: input.description,
+        properties: input.properties ?? {},
+        confidence: input.confidence ?? 0.5,
+        sourceMemoryId: input.sourceMemoryId,
+        embedding,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -1810,17 +1907,14 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_edge_create",
-        arguments: {
-          fromId: input.fromId,
-          toId: input.toId,
-          type: input.type,
-          customType: input.customType,
-          weight: input.weight ?? 0.5,
-          evidence: input.evidence,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("graph_edge_create", {
+        fromId: input.fromId,
+        toId: input.toId,
+        type: input.type,
+        customType: input.customType,
+        weight: input.weight ?? 0.5,
+        evidence: input.evidence,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -1851,12 +1945,9 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_node_delete",
-        arguments: {
-          id: nodeId,
-          permanent,
-        },
+      const result = await this.callToolWithTimeout("graph_node_delete", {
+        id: nodeId,
+        permanent,
       });
 
       const textContent = extractTextContent(result);
@@ -1885,11 +1976,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_edge_delete",
-        arguments: {
-          id: edgeId,
-        },
+      const result = await this.callToolWithTimeout("graph_edge_delete", {
+        id: edgeId,
       });
 
       const textContent = extractTextContent(result);
@@ -1924,11 +2012,8 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_node_get",
-        arguments: {
-          id: nodeId,
-        },
+      const result = await this.callToolWithTimeout("graph_node_get", {
+        id: nodeId,
       });
 
       const textContent = extractTextContent(result);
@@ -1982,15 +2067,12 @@ export class MCPClient {
         );
       }
 
-      const result = await this.client.callTool({
-        name: "graph_node_search",
-        arguments: {
-          query,
-          queryEmbedding,
-          type,
-          limit: limit ?? 10,
-          minScore: minScore ?? 0.3,
-        },
+      const result = await this.callToolWithTimeout("graph_node_search", {
+        query,
+        queryEmbedding,
+        type,
+        limit: limit ?? 10,
+        minScore: minScore ?? 0.3,
       });
 
       const textContent = extractTextContent(result);
@@ -2049,14 +2131,11 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_traverse",
-        arguments: {
-          startNodeId,
-          direction: direction ?? "both",
-          maxDepth: maxDepth ?? 2,
-          edgeTypes,
-        },
+      const result = await this.callToolWithTimeout("graph_traverse", {
+        startNodeId,
+        direction: direction ?? "both",
+        maxDepth: maxDepth ?? 2,
+        edgeTypes,
       });
 
       const textContent = extractTextContent(result);
@@ -2128,12 +2207,9 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_subgraph",
-        arguments: {
-          nodeId,
-          depth: depth ?? 2,
-        },
+      const result = await this.callToolWithTimeout("graph_subgraph", {
+        nodeId,
+        depth: depth ?? 2,
       });
 
       const textContent = extractTextContent(result);
@@ -2217,19 +2293,16 @@ export class MCPClient {
         }
       }
 
-      const result = await this.client.callTool({
-        name: "graph_node_update",
-        arguments: {
-          id,
-          type: input.type,
-          label: input.label,
-          description: input.description,
-          properties: input.properties,
-          confidence: input.confidence,
-          lastConfirmedAt: input.lastConfirmedAt,
-          embedding,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("graph_node_update", {
+        id,
+        type: input.type,
+        label: input.label,
+        description: input.description,
+        properties: input.properties,
+        confidence: input.confidence,
+        lastConfirmedAt: input.lastConfirmedAt,
+        embedding,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -2264,13 +2337,10 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "graph_edge_update",
-        arguments: {
-          id,
-          ...input,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("graph_edge_update", {
+        id,
+        ...input,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -2358,15 +2428,10 @@ export class MCPClient {
         }
       }
 
-      const result = await this.client.callTool({
-        name: "graph_write_transaction",
-        arguments: {
-          nodes: nodesWithEmbeddings.length > 0
-            ? nodesWithEmbeddings
-            : undefined,
-          edges: input.edges,
-          instanceId: this.config.instanceId,
-        },
+      const result = await this.callToolWithTimeout("graph_write_transaction", {
+        nodes: nodesWithEmbeddings.length > 0 ? nodesWithEmbeddings : undefined,
+        edges: input.edges,
+        instanceId: this.config.instanceId,
       });
 
       const textContent = extractTextContent(result);
@@ -2419,13 +2484,10 @@ export class MCPClient {
     }
 
     try {
-      const result = await this.client.callTool({
-        name: "memory_consolidate",
-        arguments: {
-          granularity: options?.granularity,
-          targetDate: options?.targetDate,
-          all: options?.all,
-        },
+      const result = await this.callToolWithTimeout("memory_consolidate", {
+        granularity: options?.granularity,
+        targetDate: options?.targetDate,
+        all: options?.all,
       });
 
       const textContent = extractTextContent(result);

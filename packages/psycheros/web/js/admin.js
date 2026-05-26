@@ -277,7 +277,7 @@
   /**
    * Export entity data — fetches zip from the server and triggers a download.
    */
-  window.adminExportEntity = async function () {
+  window.adminExportEntity = async function (forcePartial) {
     var btn = document.getElementById("admin-export-btn");
     var outputSection = document.getElementById("admin-entity-output-section");
     var outputEl = document.getElementById("admin-entity-output");
@@ -288,13 +288,36 @@
     btn.innerHTML = '<span class="admin-action-spinner"></span> Exporting...';
 
     if (outputSection) outputSection.style.display = "";
-    outputEl.textContent = "Collecting entity data from entity-core and Psycheros...\n";
+
+    var partialUrl = forcePartial ? "/api/admin/entity-data/export?partial=1" : "/api/admin/entity-data/export";
+    if (forcePartial) {
+      outputEl.textContent = "Exporting Psycheros-only data (entity-core skipped)...\n";
+    } else {
+      outputEl.textContent = "Collecting entity data from entity-core and Psycheros...\n";
+    }
 
     try {
-      var res = await fetch("/api/admin/entity-data/export", { method: "POST" });
+      var res = await fetch(partialUrl, { method: "POST" });
 
       if (!res.ok) {
         var errorData = await res.json().catch(function () { return { error: res.statusText }; });
+
+        // Check for partial-export opportunity
+        if (errorData.partial) {
+          outputEl.innerHTML =
+            '<div class="admin-action-output-header admin-action-warning">Entity-core data unavailable</div>'
+            + '<div style="padding: var(--sp-3);">'
+            + '<p style="margin: 0 0 var(--sp-2) 0; color: var(--c-fg-muted);">' + escapeHtmlForOutput(errorData.message || errorData.error) + '</p>'
+            + '<div style="display: flex; gap: var(--sp-3); align-items: center;">'
+            + '<button class="admin-action-btn-danger" onclick="adminExportEntity(true)">Export Anyway (Psycheros only)</button>'
+            + '<button class="admin-action-btn-secondary" onclick="adminResetExportUI()">Cancel</button>'
+            + '</div>'
+            + '</div>';
+          btn.disabled = false;
+          btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Entity';
+          return;
+        }
+
         throw new Error(errorData.error || "Export failed");
       }
 
@@ -310,14 +333,29 @@
       URL.revokeObjectURL(url);
 
       var sizeMB = (blob.size / (1024 * 1024)).toFixed(1);
-      outputEl.innerHTML = '<div class="admin-action-output-header">Export complete — ' + escapeHtmlForOutput(sizeMB + " MB") + '</div>'
-        + '<p>File downloaded to your browser. Keep it in a safe location for backup or migration.</p>';
+      var headerClass = forcePartial ? 'admin-action-warning' : '';
+      var warningNote = forcePartial
+        ? '<p style="color: var(--c-fg-muted); margin-top: var(--sp-2);">This export does NOT include entity-core data (identity, memories, knowledge graph).</p>'
+        : '';
+      outputEl.innerHTML = '<div class="admin-action-output-header ' + headerClass + '">Export complete — ' + escapeHtmlForOutput(sizeMB + " MB") + '</div>'
+        + '<div style="padding: var(--sp-3);">'
+        + '<p>File downloaded to your browser. Keep it in a safe location for backup or migration.</p>'
+        + warningNote
+        + '</div>';
     } catch (err) {
       outputEl.innerHTML = '<div class="admin-action-output-header admin-action-error">Export failed: ' + escapeHtmlForOutput(err.message) + '</div>';
     }
 
     btn.disabled = false;
     btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Export Entity';
+  };
+
+  /**
+   * Reset the export UI after cancelling a partial-export warning.
+   */
+  window.adminResetExportUI = function () {
+    var outputEl = document.getElementById("admin-entity-output");
+    if (outputEl) outputEl.innerHTML = "";
   };
 
   /**
@@ -353,25 +391,29 @@
 
   /**
    * Perform the actual import after user confirmation.
+   * Reads a streaming NDJSON response with progress events.
    */
   window.adminConfirmImport = async function (file) {
     var btn = document.getElementById("admin-import-btn");
     var outputSection = document.getElementById("admin-entity-output-section");
     var outputEl = document.getElementById("admin-entity-output");
+    var progressSection = document.getElementById("admin-entity-import-progress");
+    var progressFill = document.getElementById("admin-entity-import-fill");
+    var progressText = document.getElementById("admin-entity-import-text");
+    var overlay = document.getElementById("admin-entity-import-overlay");
 
     if (!btn || !outputEl) return;
 
     btn.disabled = true;
     btn.innerHTML = '<span class="admin-action-spinner"></span> Importing...';
 
-    if (outputSection) outputSection.style.display = "";
-    outputEl.textContent = "Importing " + file.name + "...\n(This may take a while)\n";
+    if (progressSection) progressSection.style.display = "";
+    if (progressFill) progressFill.style.width = "0%";
+    if (progressText) progressText.textContent = "Preparing...";
+    outputEl.style.display = "none";
+    outputEl.innerHTML = "";
 
     try {
-      var formData = new FormData();
-      formData.append("file", file);
-
-      // Read file as ArrayBuffer for the server
       var arrayBuffer = await file.arrayBuffer();
       var res = await fetch("/api/admin/entity-data/import", {
         method: "POST",
@@ -379,45 +421,119 @@
         body: arrayBuffer,
       });
 
-      var data = await res.json();
+      if (!res.ok) {
+        var errorData = await res.json().catch(function () { return { error: res.statusText }; });
+        throw new Error(errorData.error || "Import failed");
+      }
 
-      if (data.success) {
-        var lines = ["Import complete."];
-        var d = data.details;
-        if (d) {
-          if (d.psycheros) {
-            if (d.psycheros.conversations_restored !== undefined) {
-              lines.push("Conversations: " + d.psycheros.conversations_restored);
-              lines.push("Messages: " + d.psycheros.messages_restored);
-            }
-            if (d.psycheros.lorebooks_restored !== undefined) {
-              lines.push("Lorebooks: " + d.psycheros.lorebooks_restored);
-              lines.push("Lorebook entries: " + d.psycheros.lorebook_entries_restored);
-            }
-            if (d.psycheros.vault_documents_restored !== undefined) {
-              lines.push("Vault documents: " + d.psycheros.vault_documents_restored);
-            }
-            if (d.psycheros.images_restored !== undefined) {
-              lines.push("Images: " + d.psycheros.images_restored);
-            }
-            if (d.psycheros.anchor_images_restored !== undefined) {
-              lines.push("Anchor images: " + d.psycheros.anchor_images_restored);
-            }
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buffer = "";
+      var finalData = null;
+
+      // Phase order for progress bar estimation
+      var phaseOrder = ["validate", "conversations", "lorebooks", "vault", "images", "anchors", "entity-core", "restart", "sync", "cleanup"];
+      var currentPhaseIndex = 0;
+
+      while (true) {
+        var result = await reader.read();
+        if (result.done) break;
+        buffer += decoder.decode(result.value, { stream: true });
+
+        var lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (var i = 0; i < lines.length; i++) {
+          var line = lines[i].trim();
+          if (!line) continue;
+          try {
+            var evt = JSON.parse(line);
+          } catch (_) {
+            continue;
           }
-          if (d.entity_core) {
-            lines.push("Entity-core: " + (d.entity_core.success ? "OK" : "FAILED — " + (d.entity_core.error || "unknown error")));
-          }
-          if (d.sync_pull) {
-            lines.push("MCP sync pull: completed");
+
+          if (evt.phase === "error") {
+            throw new Error(evt.error || "Import failed");
+          } else if (evt.phase === "done") {
+            finalData = evt;
+          } else {
+            // Progress event — update the progress bar
+            var phaseIdx = phaseOrder.indexOf(evt.phase);
+            if (phaseIdx >= 0) currentPhaseIndex = phaseIdx;
+
+            // Progress = completed phases + fraction of current phase
+            var phaseProgress = evt.total > 0 && evt.current != null
+              ? (evt.current / evt.total)
+              : 0;
+            var totalPhases = phaseOrder.length;
+            var pct = Math.round(((currentPhaseIndex + phaseProgress) / totalPhases) * 100);
+            if (pct > 98) pct = 98; // Reserve 100% for done
+            if (progressFill) progressFill.style.width = pct + "%";
+
+            var label = evt.status || evt.phase;
+            if (evt.current != null && evt.total != null) {
+              label += " (" + evt.current + "/" + evt.total + ")";
+            }
+            if (progressText) progressText.textContent = label;
+
+            // Show blocking overlay during entity-core phases
+            if ((evt.phase === "entity-core" || evt.phase === "restart" || evt.phase === "sync") && overlay) {
+              overlay.style.display = "";
+            }
           }
         }
-        outputEl.innerHTML = '<div class="admin-action-output-header">Import successful</div>'
-          + '<pre class="admin-action-output-pre">' + escapeHtmlForOutput(lines.join("\n")) + '</pre>';
+      }
+
+      // Hide overlay and progress, show output
+      if (overlay) overlay.style.display = "none";
+      if (progressSection) progressSection.style.display = "none";
+      outputEl.style.display = "";
+
+      if (finalData) {
+        if (finalData.success) {
+          var lines = ["Import complete."];
+          var d = finalData.details;
+          if (d) {
+            if (d.psycheros) {
+              if (d.psycheros.conversations_restored !== undefined) {
+                lines.push("Conversations: " + d.psycheros.conversations_restored);
+                lines.push("Messages: " + d.psycheros.messages_restored);
+              }
+              if (d.psycheros.lorebooks_restored !== undefined) {
+                lines.push("Lorebooks: " + d.psycheros.lorebooks_restored);
+                lines.push("Lorebook entries: " + d.psycheros.lorebook_entries_restored);
+              }
+              if (d.psycheros.vault_documents_restored !== undefined) {
+                lines.push("Vault documents: " + d.psycheros.vault_documents_restored);
+              }
+              if (d.psycheros.images_restored !== undefined) {
+                lines.push("Images: " + d.psycheros.images_restored);
+              }
+              if (d.psycheros.anchor_images_restored !== undefined) {
+                lines.push("Anchor images: " + d.psycheros.anchor_images_restored);
+              }
+            }
+            if (d.entity_core) {
+              lines.push("Entity-core: " + (d.entity_core.success ? "OK" : "FAILED — " + (d.entity_core.error || "unknown error")));
+            }
+            if (d.sync_pull) {
+              lines.push("MCP sync pull: completed");
+            }
+          }
+          outputEl.innerHTML = '<div class="admin-action-output-header">Import successful</div>'
+            + '<pre class="admin-action-output-pre">' + escapeHtmlForOutput(lines.join("\n")) + '</pre>';
+        } else {
+          outputEl.innerHTML = '<div class="admin-action-output-header admin-action-error">Import failed: ' + escapeHtmlForOutput(finalData.error || "unknown error") + '</div>';
+        }
       } else {
-        outputEl.innerHTML = '<div class="admin-action-output-header admin-action-error">Import failed: ' + escapeHtmlForOutput(data.error || "unknown error") + '</div>';
+        outputEl.innerHTML = '<div class="admin-action-output-header admin-action-error">No response received</div>';
       }
     } catch (err) {
-      outputEl.innerHTML = '<div class="admin-action-output-header admin-action-error">Request failed: ' + escapeHtmlForOutput(err.message) + '</div>';
+      if (overlay) overlay.style.display = "none";
+      if (progressSection) progressSection.style.display = "none";
+      outputEl.style.display = "";
+      outputEl.innerHTML = '<div class="admin-action-output-header admin-action-error">'
+        + 'Request failed: ' + escapeHtmlForOutput(err.message) + '</div>';
     }
 
     btn.disabled = false;

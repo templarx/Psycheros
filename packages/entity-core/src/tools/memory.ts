@@ -77,6 +77,7 @@ export const MemoryUpdateSchema = z.object({
   content: z.string().min(1),
   editedBy: z.string().optional(),
   instanceId: z.string().optional(),
+  slug: z.string().optional(),
 });
 
 /**
@@ -799,7 +800,7 @@ export function createMemoryListHandler(store: FileStore) {
 
         memories.push({
           granularity: memory.granularity,
-          date: memory.date,
+          date: memory.slug ? `${memory.date}_${memory.slug}` : memory.date,
           preview: memory.content.slice(0, 100) +
             (memory.content.length > 100 ? "..." : ""),
           ...(memory.sourceInstance
@@ -860,11 +861,17 @@ export function createMemoryUpdateHandler(
     const { granularity, date, content, editedBy, instanceId } = input;
 
     // Read existing memory to preserve metadata.
-    // When instanceId is not provided, search across all instance variants
-    // (e.g. for daily memories with instance-scoped filenames).
-    const existing = instanceId
+    // Always use findMemoryByDate for significant memories — readMemory
+    // with instanceId looks for a daily-style instance-suffix file, which
+    // doesn't exist for slug-based significant memories.
+    const existing = (instanceId && granularity !== "significant")
       ? await store.readMemory(granularity, date, instanceId)
       : await store.findMemoryByDate(granularity, date);
+
+    // Preserve slug: prefer explicit input, fall back to existing entry.
+    // Without the slug, writeMemory would create a bare {date}.md file
+    // that shadows the real {date}_{slug}.md.
+    const slug = input.slug ?? existing?.slug;
 
     const memory: MemoryEntry = {
       id: `${granularity}-${date}`,
@@ -877,6 +884,7 @@ export function createMemoryUpdateHandler(
       version: (existing?.version ?? 0) + 1,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      ...(slug ? { slug } : {}),
     };
 
     await store.writeMemory(memory);

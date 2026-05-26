@@ -2262,6 +2262,85 @@ export async function handleCreateCustomFile(
 }
 
 /**
+ * Handle POST /api/settings/identity/upload - Upload an identity file.
+ * Writes through MCP so entity-core stays canonical. Overwrites if the file
+ * already exists.
+ */
+export async function handleUploadIdentityFile(
+  ctx: RouteContext,
+  request: Request,
+): Promise<Response> {
+  try {
+    const body = await request.json();
+    const { directory, filename, content } = body as {
+      directory?: string;
+      filename?: string;
+      content?: string;
+    };
+
+    if (!isValidDirectory(directory ?? "")) {
+      return new Response(
+        JSON.stringify({ error: "Invalid directory" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (typeof filename !== "string" || !filename.trim()) {
+      return new Response(
+        JSON.stringify({ error: "Missing or invalid filename" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Ensure filename ends with .md
+    const fullFilename = filename.endsWith(".md") ? filename : `${filename}.md`;
+
+    const isCustom = directory === "custom";
+    if (!isValidFilename(fullFilename, isCustom)) {
+      return new Response(
+        JSON.stringify({
+          error:
+            "Invalid filename. Use only letters, numbers, and underscores (no spaces).",
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    if (typeof content !== "string" || !content.trim()) {
+      return new Response(
+        JSON.stringify({ error: "Content cannot be empty" }),
+        { status: 400, headers: { "Content-Type": "application/json" } },
+      );
+    }
+
+    // Write through MCP (source of truth) or fall back to direct file write
+    if (ctx.mcpClient) {
+      await ctx.mcpClient.writeIdentityFile(
+        directory as "self" | "user" | "relationship" | "custom",
+        fullFilename,
+        content,
+        ctx.dataRoot,
+      );
+    } else {
+      const dirPath = `${ctx.dataRoot}/identity/${directory}`;
+      await Deno.mkdir(dirPath, { recursive: true });
+      await Deno.writeTextFile(`${dirPath}/${fullFilename}`, content);
+    }
+
+    return new Response(
+      JSON.stringify({ success: true, filename: fullFilename }),
+      { status: 201, headers: { "Content-Type": "application/json" } },
+    );
+  } catch (error) {
+    console.error("[Routes] handleUploadIdentityFile error:", error);
+    return new Response(
+      JSON.stringify({ error: "Failed to upload file" }),
+      { status: 500, headers: { "Content-Type": "application/json" } },
+    );
+  }
+}
+
+/**
  * Handle DELETE /api/settings/file/custom/:filename - Delete a custom file.
  * Only custom files can be deleted.
  *
@@ -2577,8 +2656,12 @@ export async function handleSaveMemory(
     });
   }
 
-  // Extract the date portion for MCP lookup (before any instance suffix)
-  const mcpDate = date.split("_")[0];
+  // Extract the date portion for MCP lookup (before any slug suffix)
+  const parts = date.split("_");
+  const mcpDate = parts[0];
+  const slug = granularity === "significant" && parts.length > 1
+    ? parts.slice(1).join("_")
+    : undefined;
 
   if (!ctx.mcpClient?.isConnected()) {
     return new Response(
@@ -2606,6 +2689,7 @@ export async function handleSaveMemory(
       granularity as "daily" | "weekly" | "monthly" | "yearly" | "significant",
       mcpDate,
       content,
+      slug,
     );
 
     return new Response(renderSaveSuccess(), {
@@ -2727,9 +2811,11 @@ export async function handleDeleteSignificantMemory(
   ctx: RouteContext,
   filename: string,
 ): Promise<Response> {
-  // Extract date from the URL filename (e.g., "2026-04-06_some-slug" -> "2026-04-06")
+  // Extract date and slug from the URL filename (e.g., "2026-04-06_some-slug" -> date + slug)
   const decoded = decodeURIComponent(filename);
-  const date = decoded.split("_")[0];
+  const parts = decoded.split("_");
+  const date = parts[0];
+  const slug = parts.length > 1 ? parts.slice(1).join("_") : undefined;
 
   if (!ctx.mcpClient?.isConnected()) {
     return new Response(
@@ -2742,7 +2828,19 @@ export async function handleDeleteSignificantMemory(
   }
 
   try {
-    await ctx.mcpClient.deleteMemory("significant", date);
+    const deleted = await ctx.mcpClient.deleteMemory("significant", date, slug);
+
+    if (!deleted) {
+      console.warn(`[Routes] Memory not found for delete: ${decoded}`);
+      return new Response(
+        JSON.stringify({ error: "Memory not found" }),
+        {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+
     console.log(`[Routes] Deleted significant memory via MCP: ${decoded}`);
 
     return new Response(

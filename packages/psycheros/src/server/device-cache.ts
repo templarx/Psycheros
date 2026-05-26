@@ -159,7 +159,11 @@ export class DeviceStatusCache {
         data?: { toys: string };
       };
 
-      if (data.code !== 200 || !data.data?.toys) return;
+      // API responded but no toys data — toys are disconnected
+      if (data.code !== 200 || !data.data?.toys) {
+        this.lovenseStatus = { connected: false, toys: [] };
+        return;
+      }
 
       const toysMap = JSON.parse(data.data.toys) as Record<
         string,

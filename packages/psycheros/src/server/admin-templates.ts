@@ -788,6 +788,16 @@ export function renderAdminEntityData(): string {
         </svg>
         Full Overwrite Import
       </button>
+      <div class="import-progress" id="admin-entity-import-progress" style="display:none">
+        <div class="import-progress-bar">
+          <div class="import-progress-fill" id="admin-entity-import-fill"></div>
+        </div>
+        <div class="import-progress-text" id="admin-entity-import-text">Preparing...</div>
+      </div>
+      <div class="import-blocking-overlay" id="admin-entity-import-overlay" style="display:none">
+        <div class="import-blocking-text">Importing entity data...</div>
+        <div class="import-blocking-subtext">Do not close this page. The import will continue in the background.</div>
+      </div>
     </div>
   </div>
 

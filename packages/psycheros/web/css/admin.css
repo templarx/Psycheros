@@ -648,6 +648,47 @@
   cursor: not-allowed;
 }
 
+.admin-action-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  background: transparent;
+  border: 1px solid var(--c-border);
+  color: var(--c-fg-muted);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.admin-action-btn-secondary:hover {
+  background: var(--c-bg-sunken);
+  color: var(--c-fg);
+}
+
+.admin-action-btn-danger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-4);
+  background: rgba(229, 53, 53, 0.1);
+  border: 1px solid rgba(229, 53, 53, 0.3);
+  color: var(--c-error);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+
+.admin-action-btn-danger:hover {
+  background: rgba(229, 53, 53, 0.2);
+}
+
 .admin-action-spinner {
   display: inline-block;
   width: 12px;
@@ -682,6 +723,10 @@
 
 .admin-action-output-header.admin-action-error {
   color: var(--c-error);
+}
+
+.admin-action-output-header.admin-action-warning {
+  color: #e5a00d;
 }
 
 .admin-action-output-pre {

@@ -27,6 +27,17 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/**
+ * Progress event emitted during entity data import.
+ * Passed via the `onProgress` callback to `importEntityData()`.
+ */
+export interface ImportProgressEvent {
+  phase: string;
+  status: string;
+  current?: number;
+  total?: number;
+}
+
 export interface ImportResult {
   success: boolean;
   error?: string;
@@ -78,19 +89,31 @@ function execSql(
 }
 
 /**
- * Export all entity data as a zip file.
- *
- * Calls entity-core's entity_export tool via MCP, then adds
- * Psycheros-specific data (conversations, lorebooks, vault, images).
+ * Try to collect entity-core export data via MCP, with one retry after a
+ * restart if the first attempt fails.
  */
-export async function exportEntityData(ctx: RouteContext): Promise<Uint8Array> {
-  const zip = new JSZip();
+async function collectEntityCoreData(
+  ctx: RouteContext,
+  zip: JSZip,
+): Promise<{ manifest?: Record<string, unknown>; error?: string }> {
+  const mcp = ctx.mcpClient;
 
-  // --- entity-core data via MCP ---
-  let entityCoreManifest: Record<string, unknown> | undefined;
-  if (ctx.mcpClient?.isConnected()) {
+  // No MCP client at all — MCP is intentionally disabled
+  if (!mcp) {
+    return {
+      error:
+        "MCP is not enabled. Enable MCP to include entity-core data in exports.",
+    };
+  }
+
+  const tryCollect = async (): Promise<
+    { manifest?: Record<string, unknown>; error?: string }
+  > => {
+    if (!mcp.isConnected()) {
+      return { error: "MCP is not connected" };
+    }
     try {
-      const result = await callMcpTool(ctx.mcpClient, "entity_export", {});
+      const result = await callMcpTool(mcp, "entity_export", {});
       if (result) {
         const parsed = JSON.parse(result);
         if (parsed.success && parsed.data) {
@@ -100,22 +123,86 @@ export async function exportEntityData(ctx: RouteContext): Promise<Uint8Array> {
           );
           const coreZip = await JSZip.loadAsync(zipBytes);
 
-          // Copy all entity-core files into our zip
           for (const [path, file] of Object.entries(coreZip.files)) {
             if (file.dir) continue;
             const content = await file.async("uint8array");
             zip.file(path, content);
           }
 
-          // Read manifest for counts
           const manifestFile = coreZip.file("manifest.json");
           if (manifestFile) {
-            entityCoreManifest = JSON.parse(await manifestFile.async("string"));
+            return { manifest: JSON.parse(await manifestFile.async("string")) };
           }
+          return { manifest: undefined };
         }
       }
-    } catch (error) {
-      console.error("[EntityData] Failed to export entity-core data:", error);
+      return { error: "entity_export returned no usable data" };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { error: msg };
+    }
+  };
+
+  // Attempt 1
+  const first = await tryCollect();
+  if (!first.error) return first;
+
+  // Attempt 2: restart MCP and retry
+  console.warn(
+    "[EntityData] entity-core export failed, restarting MCP for retry:",
+    first.error,
+  );
+  try {
+    const restarted = await mcp.restart();
+    if (restarted) {
+      const second = await tryCollect();
+      if (!second.error) return second;
+      return { error: `entity-core unavailable after retry: ${second.error}` };
+    }
+    return {
+      error:
+        `entity-core unavailable: MCP restart failed (original error: ${first.error})`,
+    };
+  } catch (restartErr) {
+    const msg = restartErr instanceof Error
+      ? restartErr.message
+      : String(restartErr);
+    return {
+      error:
+        `entity-core unavailable: MCP restart threw (${msg}; original error: ${first.error})`,
+    };
+  }
+}
+
+export interface ExportResult {
+  zipBytes: Uint8Array;
+  entityCoreError?: string;
+}
+
+/**
+ * Export all entity data as a zip file.
+ *
+ * Calls entity-core's entity_export tool via MCP (with automatic restart+retry
+ * on failure), then adds Psycheros-specific data (conversations, lorebooks,
+ * vault, images). Returns both the zip bytes and any entity-core error so the
+ * caller can decide how to surface it.
+ */
+export async function exportEntityData(
+  ctx: RouteContext,
+  options?: { skipEntityCore?: boolean },
+): Promise<ExportResult> {
+  const zip = new JSZip();
+
+  // --- entity-core data via MCP ---
+  let entityCoreManifest: Record<string, unknown> | undefined;
+  let entityCoreError: string | undefined;
+
+  if (!options?.skipEntityCore) {
+    const coreResult = await collectEntityCoreData(ctx, zip);
+    entityCoreManifest = coreResult.manifest;
+    entityCoreError = coreResult.error;
+    if (entityCoreError) {
+      console.error("[EntityData] entity-core export failed:", entityCoreError);
     }
   }
 
@@ -325,13 +412,14 @@ export async function exportEntityData(ctx: RouteContext): Promise<Uint8Array> {
   }
 
   // Build manifest
-  const manifest = {
+  const manifest: Record<string, unknown> = {
     schema_version: 1,
     exported_at: new Date().toISOString(),
     parts: {
       entity_core: entityCoreManifest
         ? (entityCoreManifest.parts as Record<string, unknown>)?.entity_core
         : false,
+      ...(options?.skipEntityCore ? { entity_core_skipped: true } : {}),
       psycheros: {
         conversations: true,
         lorebooks: true,
@@ -350,9 +438,14 @@ export async function exportEntityData(ctx: RouteContext): Promise<Uint8Array> {
     },
   };
 
+  if (entityCoreError && !options?.skipEntityCore) {
+    manifest.entity_core_error = entityCoreError;
+  }
+
   zip.file("manifest.json", JSON.stringify(manifest, null, 2));
 
-  return await zip.generateAsync({ type: "uint8array" });
+  const zipBytes = await zip.generateAsync({ type: "uint8array" });
+  return { zipBytes, entityCoreError };
 }
 
 /**
@@ -364,8 +457,18 @@ export async function exportEntityData(ctx: RouteContext): Promise<Uint8Array> {
 export async function importEntityData(
   ctx: RouteContext,
   zipData: Uint8Array,
+  onProgress?: (event: ImportProgressEvent) => Promise<void>,
 ): Promise<ImportResult> {
   const importStart = Date.now();
+
+  // Helper to emit progress and yield to the event loop.
+  const progress = async (event: ImportProgressEvent) => {
+    if (onProgress) await onProgress(event);
+  };
+  // Yield to the event loop so /health and other endpoints stay responsive
+  // during heavy synchronous SQLite operations.
+  const yieldLoop = () => new Promise<void>((r) => setTimeout(r, 0));
+
   console.log(
     "[entity-data] Starting import, zip size:",
     (zipData.length / 1024 / 1024).toFixed(2),
@@ -394,6 +497,8 @@ export async function importEntityData(
       };
     }
 
+    await progress({ phase: "validate", status: "Package validated." });
+
     const details: ImportResult["details"] = {
       psycheros: {},
     };
@@ -417,6 +522,13 @@ export async function importEntityData(
           messages: Array<Record<string, unknown>>;
         }>;
 
+        await progress({
+          phase: "conversations",
+          status: "Clearing existing conversations...",
+          total: conversations.length,
+        });
+        await yieldLoop();
+
         // Clear existing (messages cascade via FK)
         execSql(ctx, "DELETE FROM lorebook_state");
         execSql(ctx, "DELETE FROM context_snapshots");
@@ -426,7 +538,8 @@ export async function importEntityData(
         execSql(ctx, "DELETE FROM conversations");
 
         let messageTotal = 0;
-        for (const conv of conversations) {
+        for (let ci = 0; ci < conversations.length; ci++) {
+          const conv = conversations[ci];
           execSql(
             ctx,
             "INSERT OR IGNORE INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)",
@@ -455,6 +568,17 @@ export async function importEntityData(
             );
             messageTotal++;
           }
+
+          // Yield every 50 conversations to keep /health responsive
+          if (ci > 0 && ci % 50 === 0) {
+            await progress({
+              phase: "conversations",
+              status: "Importing conversations...",
+              current: ci + 1,
+              total: conversations.length,
+            });
+            await yieldLoop();
+          }
         }
 
         details.psycheros.conversations_restored = conversations.length;
@@ -471,6 +595,13 @@ export async function importEntityData(
         ) as Array<
           Record<string, unknown> & { entries?: Array<Record<string, unknown>> }
         >;
+
+        await progress({
+          phase: "lorebooks",
+          status: "Clearing existing lorebooks...",
+          total: lorebooks.length,
+        });
+        await yieldLoop();
 
         execSql(ctx, "DELETE FROM lorebook_state");
         execSql(ctx, "DELETE FROM lorebook_entries");
@@ -531,6 +662,13 @@ export async function importEntityData(
           }
         }
 
+        await progress({
+          phase: "lorebooks",
+          status: "Lorebooks imported.",
+          current: lorebooks.length,
+          total: lorebooks.length,
+        });
+
         details.psycheros.lorebooks_restored = lorebooks.length;
         details.psycheros.lorebook_entries_restored = entryTotal;
       }
@@ -539,6 +677,12 @@ export async function importEntityData(
     // Vault documents (all scopes)
     if (psycherosParts.vault) {
       const vaultPrefix = "psycheros/vault/";
+
+      await progress({
+        phase: "vault",
+        status: "Clearing existing vault documents...",
+      });
+      await yieldLoop();
 
       // Clear existing vault chunks and documents
       execSql(ctx, "DELETE FROM vault_chunks");
@@ -646,8 +790,15 @@ export async function importEntityData(
         }
 
         docCount++;
+        if (docCount % 50 === 0) await yieldLoop();
       }
 
+      await progress({
+        phase: "vault",
+        status: "Vault documents restored.",
+        current: docCount,
+        total: docCount,
+      });
       details.psycheros.vault_documents_restored = docCount;
     }
 
@@ -661,6 +812,9 @@ export async function importEntityData(
       );
       await ensureDir(generatedDir);
 
+      await progress({ phase: "images", status: "Restoring images..." });
+      await yieldLoop();
+
       let imgCount = 0;
       for (const [filename, file] of Object.entries(zip.files)) {
         if (file.dir || !filename.startsWith(imagesPrefix)) continue;
@@ -670,8 +824,15 @@ export async function importEntityData(
         const bytes = await file.async("uint8array");
         await Deno.writeFile(join(generatedDir, basename), bytes);
         imgCount++;
+        if (imgCount % 50 === 0) await yieldLoop();
       }
 
+      await progress({
+        phase: "images",
+        status: "Images restored.",
+        current: imgCount,
+        total: imgCount,
+      });
       details.psycheros.images_restored = imgCount;
     }
 
@@ -679,6 +840,10 @@ export async function importEntityData(
     {
       const anchorFile = zip.file("psycheros/anchor-images.json");
       if (anchorFile) {
+        await progress({
+          phase: "anchors",
+          status: "Restoring anchor images...",
+        });
         const anchors = JSON.parse(await anchorFile.async("string")) as Array<
           Record<string, unknown>
         >;
@@ -707,6 +872,11 @@ export async function importEntityData(
 
     // --- Import entity-core data via MCP ---
     if (entityCoreParts && ctx.mcpClient?.isConnected()) {
+      await progress({
+        phase: "entity-core",
+        status: "Importing entity-core data (identity, memories, graph)...",
+      });
+      await yieldLoop();
       console.log("[entity-data] Importing entity-core data via MCP…");
       try {
         // Re-zip only the entity-core portion
@@ -795,6 +965,11 @@ export async function importEntityData(
     // the entity-core process with stale DB handles. Restart MCP so entity-core
     // gets a fresh process with a consistent state.
     if (details.entity_core?.success && ctx.mcpClient) {
+      await progress({
+        phase: "restart",
+        status: "Restarting entity-core for clean state...",
+      });
+      await yieldLoop();
       console.log("[entity-data] Restarting MCP for clean post-import state…");
       try {
         await ctx.mcpClient.restart();
@@ -803,6 +978,10 @@ export async function importEntityData(
       }
 
       if (ctx.mcpClient.isConnected()) {
+        await progress({
+          phase: "sync",
+          status: "Syncing identity data...",
+        });
         console.log("[entity-data] Running post-import sync pull…");
         try {
           await ctx.mcpClient.pull();
@@ -814,6 +993,11 @@ export async function importEntityData(
     }
 
     // Clear stale RAG tables — they'll be reindexed on next access
+    await progress({
+      phase: "cleanup",
+      status: "Clearing stale search indexes...",
+    });
+    await yieldLoop();
     try {
       execSql(ctx, "DELETE FROM memory_chunks");
       execSql(ctx, "DELETE FROM message_embeddings");

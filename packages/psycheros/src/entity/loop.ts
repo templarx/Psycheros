@@ -161,6 +161,10 @@ function formatConnectedDevices(
 export function formatMessageTimestamp(date: Date): string {
   const timeZone = Deno.env.get("PSYCHEROS_DISPLAY_TZ") || Deno.env.get("TZ") ||
     "UTC";
+  const weekday = date.toLocaleDateString("en-US", {
+    timeZone,
+    weekday: "short",
+  });
   const year = date.toLocaleDateString("en-US", { timeZone, year: "numeric" });
   const month = date.toLocaleDateString("en-US", {
     timeZone,
@@ -173,7 +177,7 @@ export function formatMessageTimestamp(date: Date): string {
     minute: "2-digit",
     hour12: false,
   });
-  return `<t>${year}-${month}-${day} ${time}</t>`;
+  return `<t>${weekday} ${year}-${month}-${day} ${time}</t>`;
 }
 
 /**
@@ -683,6 +687,9 @@ export class EntityTurn {
       lastInteraction || options?.deviceType || conversation || deviceSection
     ) {
       const parts: string[] = ["<situational_awareness>"];
+      parts.push(
+        `  <current_time>${formatMessageTimestamp(new Date())}</current_time>`,
+      );
       if (conversation) {
         const title = conversation.title
           ? escapeXml(conversation.title)

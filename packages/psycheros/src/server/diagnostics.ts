@@ -76,6 +76,9 @@ export interface DiagnosticsSnapshot {
     lastPingAttempt: string | null;
     lastSync: string | null;
     pendingIdentity: number;
+    reconnecting: boolean;
+    reconnectAttempts: number;
+    maxReconnectAttempts: number;
   };
 
   sse: {
@@ -255,6 +258,9 @@ export async function collectDiagnostics(
       ? ((ctx.mcpClient as any)?.cache?.lastSync as string | null) ?? null
       : null,
     pendingIdentity: 0,
+    reconnecting: pingHealth?.reconnecting ?? false,
+    reconnectAttempts: pingHealth?.reconnectAttempts ?? 0,
+    maxReconnectAttempts: pingHealth?.maxReconnectAttempts ?? 0,
   };
   if (mcpEnabled && ctx.mcpClient) {
     try {

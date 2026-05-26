@@ -406,6 +406,21 @@ function initPersistentSSE() {
     }
   });
 
+  persistentSSE.addEventListener('mcp_status', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (data.message) {
+        if (data.connected && data.alive) {
+          showToast(data.message, 'warning');
+        } else {
+          showToast(data.message, 'warning');
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to handle mcp_status:', e);
+    }
+  });
+
   persistentSSE.onerror = () => {
     // Don't rely on EventSource built-in reconnect — it can silently get
     // stuck in CONNECTING state. Close explicitly and reconnect ourselves.
@@ -3515,6 +3530,61 @@ async function createCustomFile() {
 }
 
 /**
+ * Upload an identity file (core prompt) to the given directory.
+ */
+async function uploadIdentityFile(directory) {
+  const filenameInput = document.getElementById('upload-filename-input');
+  const contentInput = document.getElementById('upload-content-input');
+  if (!filenameInput || !contentInput) {
+    showToast('Upload form not found');
+    return;
+  }
+
+  let filename = filenameInput.value.trim();
+  if (!filename) {
+    showToast('Please enter a file name');
+    return;
+  }
+
+  // Add .md extension if not present
+  if (!filename.endsWith('.md')) {
+    filename = filename + '.md';
+  }
+
+  const content = contentInput.value.trim();
+  if (!content) {
+    showToast('Please enter file content');
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/settings/identity/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ directory, filename, content }),
+    });
+
+    const result = await response.json();
+
+    if (result.success) {
+      showToast(`Uploaded ${result.filename}`);
+      filenameInput.value = '';
+      contentInput.value = '';
+      // Reload file list for this directory
+      htmx.ajax('GET', `/fragments/settings/core-prompts/${directory}`, {
+        target: '#settings-content',
+        swap: 'innerHTML',
+      });
+    } else {
+      showToast(result.error || 'Failed to upload file');
+    }
+  } catch (error) {
+    console.error('Failed to upload identity file:', error);
+    showToast('Failed to upload file');
+  }
+}
+
+/**
  * Delete a custom file after confirmation.
  */
 async function deleteCustomFile(filename) {
@@ -3989,6 +4059,29 @@ async function createSignificantMemory() {
   }
 }
 
+async function deleteSignificantMemory(date) {
+  if (!confirm('Delete this memory? This cannot be undone.')) {
+    return;
+  }
+
+  try {
+    const response = await fetch(`/api/memories/significant/${encodeURIComponent(date)}`, {
+      method: 'DELETE',
+      headers: { 'Accept': 'application/json' },
+    });
+
+    const result = await response.json();
+
+    showToast(result.success ? 'Memory deleted' : (result.error || 'Failed to delete memory'));
+    htmx.ajax('GET', '/fragments/settings/memories/significant', {
+      target: '#settings-content',
+      swap: 'innerHTML',
+    });
+  } catch (error) {
+    showToast('Failed to delete memory: ' + error.message);
+  }
+}
+
 function goBack() {
   if (currentConversationId) {
     loadConversationFromUrl(currentConversationId, { silent: true });
@@ -4052,6 +4145,8 @@ globalThis.Psycheros = {
   // Custom file management
   createCustomFile,
   deleteCustomFile,
+  // Identity file upload
+  uploadIdentityFile,
   // Pulse system
   switchTab,
   updatePulseTriggerFields,
@@ -4059,6 +4154,7 @@ globalThis.Psycheros = {
   savePulse,
   // Significant memory
   createSignificantMemory,
+  deleteSignificantMemory,
   // Auto-scroll (for inline scripts in fragments)
   autoScrollReinit: () => AutoScroll.reinit(),
   autoScrollJump: () => AutoScroll.jumpToBottom(),
@@ -4250,6 +4346,8 @@ globalThis.loadMoreMemories = function(granularity, offset) {
       var existingList = container.querySelector('.settings-file-list');
       if (newItems && existingList) {
         existingList.insertAdjacentHTML('beforeend', newItems.innerHTML);
+        // Initialize HTMX on the newly inserted elements so hx-get etc. work
+        htmx.process(existingList);
       }
 
       // Remove current load-more button

@@ -179,6 +179,29 @@ When MCP is enabled, Psycheros:
 - Falls back to local identity files if MCP is unavailable (memory operations
   require MCP)
 
+### Crash resilience
+
+All MCP tool calls have a 30-second timeout (health pings use 5 seconds). If
+entity-core hangs or becomes unresponsive, calls fail fast instead of blocking
+indefinitely.
+
+A health ping runs every 30 seconds. When entity-core stops responding:
+
+1. The ping detects the failure and marks entity-core as dead
+2. A toast notification appears in the UI: "Entity-core disconnected —
+   attempting automatic reconnect..."
+3. An automatic reconnect is scheduled with exponential backoff (5s, 10s, 20s,
+   40s, 80s — up to 5 attempts)
+4. Each attempt shows a toast with progress: "Reconnecting to entity-core
+   (attempt 2/5)..."
+5. If reconnect succeeds, a "Entity-core reconnected" toast confirms recovery
+6. If all 5 attempts fail, a final toast warns that manual intervention is
+   needed
+
+Manual restarts (e.g., from Settings > Entity Core or admin actions) always
+reset the attempt counter. The Diagnostics Dashboard shows live reconnect
+status.
+
 ## Migration to entity-core
 
 To migrate existing local identity files and memories to entity-core:

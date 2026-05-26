@@ -460,6 +460,24 @@ export class FileStore {
 
           // For significant memories, the suffix is the slug; for daily, it's the instance ID
           const isSignificant = granularity === "significant" && suffix;
+
+          // Auto-remove orphaned bare-date files in the significant directory.
+          // These are left behind by a bug where memory_update wrote to
+          // {date}.md instead of {date}_{slug}.md.  They shadow the real
+          // slug-based files in findMemoryByDate lookups and can't be properly
+          // managed through the UI.
+          if (granularity === "significant" && !suffix) {
+            console.warn(
+              `[Storage] Removing orphaned significant memory file: ${entry.name}`,
+            );
+            try {
+              await Deno.remove(join(dir, entry.name));
+            } catch {
+              // Already gone — fine.
+            }
+            continue;
+          }
+
           const memory = await this.readMemory(
             granularity,
             date,
@@ -589,6 +607,23 @@ export class FileStore {
     }
 
     await Deno.remove(filePath);
+
+    // For significant memories with a slug, also remove any orphaned bare-date
+    // file ({date}.md) left behind by the slug propagation bug. These orphans
+    // shadow slug-based files in findMemoryByDate and keep showing up in lists
+    // even after the real file is deleted.
+    if (granularity === "significant" && slug) {
+      const orphanPath = this.getMemoryPath({ granularity, date });
+      try {
+        await Deno.remove(orphanPath);
+        console.warn(
+          `[Storage] Removed orphaned bare-date file: ${orphanPath}`,
+        );
+      } catch {
+        // No orphan to clean up — that's fine.
+      }
+    }
+
     return true;
   }
 

@@ -231,6 +231,7 @@ import {
   handleUploadBackground,
   handleUploadChatAttachment,
   handleUploadCustomTool,
+  handleUploadIdentityFile,
   handleUploadVault,
   handleVaultDetailFragment,
   handleVaultFragment,
@@ -1781,6 +1782,11 @@ export class Server {
       return await handleCreateCustomFile(ctx, request);
     }
 
+    // POST /api/settings/identity/upload - Upload identity file
+    if (method === "POST" && path === "/api/settings/identity/upload") {
+      return await handleUploadIdentityFile(ctx, request);
+    }
+
     // DELETE /api/settings/file/custom/:filename - Delete custom file
     const deleteCustomMatch = path.match(
       /^\/api\/settings\/file\/custom\/([^/]+)$/,
@@ -2420,7 +2426,9 @@ export class Server {
 
     // POST /api/admin/entity-data/export - Export entity data as zip
     if (method === "POST" && path === "/api/admin/entity-data/export") {
-      return await handleAdminEntityDataExport(ctx);
+      const url = new URL(request.url);
+      const skipEntityCore = url.searchParams.get("partial") === "1";
+      return await handleAdminEntityDataExport(ctx, skipEntityCore);
     }
 
     // POST /api/admin/entity-data/import - Import entity data from zip

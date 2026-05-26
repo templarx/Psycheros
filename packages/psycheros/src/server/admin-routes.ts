@@ -30,7 +30,11 @@ import {
   renderLogEntries,
 } from "./admin-templates.ts";
 import { getActiveProfile } from "../llm/settings.ts";
-import { exportEntityData, importEntityData } from "./entity-data.ts";
+import {
+  exportEntityData,
+  importEntityData,
+  type ImportProgressEvent,
+} from "./entity-data.ts";
 import { getEmbedder } from "../rag/embedder.ts";
 import { serializeVector } from "../db/vector.ts";
 
@@ -490,17 +494,39 @@ export function handleAdminEntityDataFragment(_ctx: RouteContext): Response {
 
 /**
  * POST /api/admin/entity-data/export — Export entity data as a zip download.
+ *
+ * If entity-core data is unavailable (MCP not connected, crashed, or
+ * disabled), returns a JSON error with `partial: true` so the frontend can
+ * offer a Psycheros-only export as a fallback.
+ *
+ * Query param `?partial=1` skips entity-core entirely and returns the zip
+ * with Psycheros-only data.
  */
 export async function handleAdminEntityDataExport(
   ctx: RouteContext,
+  skipEntityCore = false,
 ): Promise<Response> {
   try {
-    const zipBytes = await exportEntityData(ctx);
+    const result = await exportEntityData(ctx, { skipEntityCore });
+
+    if (result.entityCoreError && !skipEntityCore) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          partial: true,
+          error: result.entityCoreError,
+          message:
+            "Entity-core data could not be collected. Identity, memories, and knowledge graph will NOT be included. You can export Psycheros-only data, or cancel to fix the issue.",
+        }),
+        { headers: JSON_HEADERS },
+      );
+    }
+
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(
       0,
       19,
     );
-    return new Response(zipBytes.buffer as ArrayBuffer, {
+    return new Response(result.zipBytes.buffer as ArrayBuffer, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition":
@@ -520,23 +546,49 @@ export async function handleAdminEntityDataExport(
 
 /**
  * POST /api/admin/entity-data/import — Import entity data from an uploaded zip.
+ *
+ * Returns a streaming NDJSON response with progress events so the frontend
+ * can show a progress bar during long imports. Each line is a JSON object
+ * with a `phase` field describing the current import step and optional
+ * `current`/`total` counts.
  */
-export async function handleAdminEntityDataImport(
+export function handleAdminEntityDataImport(
   ctx: RouteContext,
   body: Uint8Array,
-): Promise<Response> {
-  try {
-    const result = await importEntityData(ctx, body);
-    return new Response(JSON.stringify(result), { headers: JSON_HEADERS });
-  } catch (error) {
-    return new Response(
-      JSON.stringify({
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      }),
-      { headers: JSON_HEADERS },
-    );
-  }
+): Response {
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    start(controller) {
+      const emit = (event: ImportProgressEvent | Record<string, unknown>) => {
+        controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
+      };
+
+      // Progress callback passed to importEntityData().
+      // Also yields to the event loop so /health stays responsive.
+      const onProgress = async (event: ImportProgressEvent) => {
+        emit(event);
+        await new Promise<void>((r) => setTimeout(r, 0));
+      };
+
+      importEntityData(ctx, body, onProgress)
+        .then((result) => {
+          emit({ phase: "done", ...result });
+          controller.close();
+        })
+        .catch((error) => {
+          emit({
+            phase: "error",
+            error: error instanceof Error ? error.message : String(error),
+          });
+          controller.close();
+        });
+    },
+  });
+
+  return new Response(stream, {
+    headers: { "Content-Type": "application/x-ndjson" },
+  });
 }
 
 /**
@@ -1310,8 +1362,9 @@ export async function handleAdminDataMigrationGraph(
                 phase: "restart",
                 status: "Entity-core stopped. Importing graph data...",
               });
-              // Brief pause to ensure the process has fully released the DB lock
-              await new Promise((resolve) => setTimeout(resolve, 500));
+              // Pause to ensure the process has fully released the DB lock.
+              // 1.5 s is conservative — Windows file-handle cleanup can be slow.
+              await new Promise((resolve) => setTimeout(resolve, 1500));
             } catch {
               emit(controller, {
                 phase: "restart",
@@ -1584,27 +1637,76 @@ export async function handleAdminDataMigrationGraph(
           loomDb.close();
           await Deno.remove(tempPath).catch(() => {});
 
-          // Always restart entity-core
+          // Always restart entity-core (with retries)
           if (mcpClient) {
-            try {
-              emit(controller, {
-                phase: "restart",
-                status: "Restarting entity-core...",
-              });
-              await mcpClient.connect();
-              stats.entity_core_restarted = true;
-              emit(controller, {
-                phase: "restart",
-                status: "Entity-core restarted successfully.",
-              });
-            } catch {
+            const MAX_RESTART_ATTEMPTS = 3;
+            const RESTART_DELAYS = [2000, 4000, 8000];
+
+            for (let attempt = 0; attempt < MAX_RESTART_ATTEMPTS; attempt++) {
+              try {
+                if (attempt > 0) {
+                  emit(controller, {
+                    phase: "restart",
+                    status: `Retrying entity-core restart (${
+                      attempt + 1
+                    }/${MAX_RESTART_ATTEMPTS})...`,
+                  });
+                  await new Promise((resolve) =>
+                    setTimeout(resolve, RESTART_DELAYS[attempt - 1])
+                  );
+                } else {
+                  emit(controller, {
+                    phase: "restart",
+                    status: "Restarting entity-core...",
+                  });
+                }
+
+                // Skip the initial identity pull — we just wrote to
+                // entity-core's DB directly and don't need to pull
+                // the (unchanged) identity back. This also avoids a
+                // race where entity-core is still initialising when
+                // the pull fires, causing "Connection closed" errors
+                // on Windows.
+                const connected = await mcpClient.connect({
+                  skipSync: true,
+                });
+                if (connected) {
+                  stats.entity_core_restarted = true;
+                  emit(controller, {
+                    phase: "restart",
+                    status: "Entity-core restarted successfully.",
+                  });
+                  break;
+                }
+              } catch {
+                // connect() threw — will retry if attempts remain
+              }
+            }
+
+            if (!stats.entity_core_restarted) {
               emit(controller, {
                 phase: "restart",
                 status:
-                  "WARNING: Failed to restart entity-core. You may need to restart Psycheros.",
+                  `WARNING: Failed to restart entity-core after ${MAX_RESTART_ATTEMPTS} attempts. ` +
+                  "Please restart Psycheros to restore entity-core.",
               });
             }
           }
+
+          // Emit a final done event so the frontend picks up the
+          // correct entity_core_restarted status after the restart
+          // attempt. The frontend takes the last "done" event.
+          emit(controller, {
+            phase: "done",
+            nodes_imported: stats.nodes_imported,
+            nodes_skipped: stats.nodes_skipped,
+            edges_imported: stats.edges_imported,
+            edges_skipped: stats.edges_skipped,
+            nodes_embedded: stats.nodes_embedded,
+            nodes_embed_skipped: stats.nodes_embed_skipped,
+            entity_core_restarted: stats.entity_core_restarted,
+            duration: formatElapsed(Date.now() - overallStart),
+          });
 
           controller.close();
         }

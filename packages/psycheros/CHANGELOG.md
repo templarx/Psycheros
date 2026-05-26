@@ -6,6 +6,57 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- "Upload File" button in Core Prompts UI for all categories (Self, User,
+  Relationship, Custom). Lets users restore missing identity files without
+  reinstalling. Writes through MCP so entity-core stays canonical.
+  (`POST /api/settings/identity/upload`)
+
+### Fixed
+
+- **Entity Data Import no longer causes launcher port-conflict errors.** The
+  import's heavy synchronous SQLite operations blocked the Deno event loop,
+  making the `/health` endpoint unresponsive. The launcher detected this as a
+  crash, kicked the user out, and showed a "Port 3000 is held" error. The import
+  now yields to the event loop between phases so the server stays responsive
+  throughout. The import also reports streaming progress via NDJSON so the user
+  sees a progress bar with phase labels instead of a frozen "Importing..."
+  message.
+
+- **Knowledge Graph Import no longer crashes entity-core on Windows.** The
+  import stops entity-core, writes directly to `graph.db`, then restarts it. The
+  restart was calling `pull()` immediately, which raced with entity-core startup
+  on Windows (slow file-handle cleanup) and caused a "Connection closed" error.
+  The restart now skips the unnecessary identity pull and retries up to 3 times
+  with backoff. The post-disconnect pause before writing to the database was
+  also increased from 500 ms to 1.5 s for more reliable Windows file-handle
+  release.
+
+- **Memory "Load More" items now open correctly.** The load-more function used
+  `insertAdjacentHTML` without telling HTMX about the new elements, so their
+  `hx-get` click handlers were inert. Now calls `htmx.process()` on the appended
+  items.
+- **Core prompt files no longer disappear after editing one.** The identity sync
+  (`syncIdentityToLocal`) previously deleted all local `.md` files before
+  writing back what entity-core returned. On non-Docker installs, templates were
+  seeded locally but never pushed to entity-core — so the first periodic sync
+  after editing even one file would wipe every other prompt. The sync now only
+  writes/updates files from the cache, leaving untouched files alone.
+- **Significant memory delete now works.** The slug suffix was not being passed
+  to entity-core's `memory_delete` tool, so the actual `{date}_{slug}.md` file
+  was never found and the delete silently failed. The delete button also used
+  HTMX's `hx-delete` with a JSON response that HTMX didn't reliably process; it
+  now uses a plain JS `fetch()` call with list refresh, matching the working
+  custom-file delete pattern.
+- **Significant memory save no longer creates orphan files.** The
+  `memory_update` handler now preserves the slug from the existing entry (or
+  accepts it as an explicit argument), preventing it from writing to a bare
+  `{date}.md` file that shadows the real `{date}_{slug}.md` on subsequent reads.
+- **Significant memory list now shows unique entries.** Each significant memory
+  uses `date_slug` as its list key, so multiple memories on the same date each
+  get their own editor URL instead of all linking to the same one.
+
 ## [0.4.3] - 2026-05-24
 
 ### Fixed

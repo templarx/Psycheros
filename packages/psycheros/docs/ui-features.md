@@ -584,8 +584,12 @@ Aggregates health data from 7 subsystems into a single view:
 - **Memory Consolidation**: Enabled status, summary counts by granularity
   (daily/weekly/monthly/yearly), summarized chat count
 - **MCP (entity-core)**: Transport connection status, ping-based liveness (30s
-  interval, detects hung subprocesses), last sync timestamp, pending
-  identity/memory count, last ping success/attempt timestamps
+  interval, 5s timeout per ping, detects hung or crashed subprocesses),
+  automatic reconnection with exponential backoff (5 attempts, 5s–80s delay),
+  reconnect status and attempt counter, last sync timestamp, pending
+  identity/memory count, last ping success/attempt timestamps. When entity-core
+  disconnects, a toast notification appears in the UI showing reconnection
+  progress.
 - **Knowledge Graph**: Node and edge counts
 
 Data cached for 5 seconds to avoid hammering SQLite on rapid refreshes. Manual
@@ -633,6 +637,45 @@ settings (passed through from the Psycheros environment).
 **Source files:** `src/server/logger.ts`, `src/server/diagnostics.ts`,
 `src/server/admin-routes.ts`, `src/server/admin-templates.ts`,
 `web/js/admin.js`, `web/css/admin.css`
+
+### Entity Data Export & Import
+
+Settings → System Admin → Entity Data tab. Full backup and restore of all
+entity data across both entity-core and Psycheros.
+
+**Export** produces a zip containing:
+
+- `entity-core/` — identity files, memories (daily/weekly/monthly/yearly/
+  significant), knowledge graph (SQLite + JSON export)
+- `psycheros/` — conversations + messages, lorebooks, vault documents,
+  generated images, anchor image metadata
+- `manifest.json` — schema version, timestamp, per-part status, item counts
+
+If entity-core data is unavailable (MCP disconnected, entity-core crashed, or
+MCP disabled), the export will:
+
+1. Attempt an automatic MCP restart and retry
+2. If the retry also fails, show a warning with two options:
+   - **Export Anyway** — produces a Psycheros-only zip (no identity, memories,
+     or knowledge graph)
+   - **Cancel** — stops so you can fix the entity-core connection first
+
+The manifest records `parts.entity_core: false` and `entity_core_error` when
+entity-core data is missing, so imported archives are always auditable.
+
+**Import** accepts the same zip format. It clears existing Psycheros data
+(conversations, lorebooks, vault, images) before restoring, then sends
+entity-core data through MCP's `entity_import` tool. After a successful import,
+MCP is restarted and a sync pull runs automatically.
+
+**API endpoints:**
+
+- `POST /api/admin/entity-data/export` — full export (returns zip or partial
+  error JSON)
+- `POST /api/admin/entity-data/export?partial=1` — skip entity-core, export
+  Psycheros-only data
+- `POST /api/admin/entity-data/import` — import from zip
+- `GET /fragments/admin/entity-data` — Entity Data tab HTML fragment
 
 ## Knowledge Graph Editor
 
@@ -723,6 +766,9 @@ other tabbed editors follow its pattern.
 
 - View and edit any identity file with a textarea editor
 - Create/delete custom files
+- **Upload File** -- restore or add identity files in any category. Writes
+  through MCP so entity-core stays canonical. Overwrites if the file already
+  exists.
 - **Prompt Label** input field on each file editor -- customize the XML tag name
   used in the LLM context (e.g., rename `<user_identity>` to something more
   personal like `<human_identity>`, or a preferred name). Default is the
@@ -941,6 +987,11 @@ Situational Awareness in the sidebar.
 
 **Built-in Signals:**
 
+- **Current Time** — The current date and time (with short weekday name) in the
+  user's display timezone, injected as `<current_time>` at the top of the SA
+  block on every turn. Gives the entity an unambiguous "right now" reference,
+  independent of the last interaction's timestamp.
+
 - **Current Conversation** — The conversation ID and title the entity is
   currently processing. Always present when a conversation exists.
 
@@ -979,9 +1030,10 @@ custom identity files and before lorebook/RAG content:
 
 ```xml
 <situational_awareness>
+  <current_time><t>Fri 2026-04-10 14:32</t></current_time>
   <current_conversation id="abc-123" title="Thread Title" />
   <last_user_message>
-    <timestamp><t>2026-04-10 14:32</t></timestamp>
+    <timestamp><t>Thu 2026-04-09 23:15</t></timestamp>
     <conversation id="def-456" title="Another Thread Title" />
   </last_user_message>
   <user_device>desktop</user_device>
