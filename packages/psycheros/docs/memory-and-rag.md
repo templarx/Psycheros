@@ -85,6 +85,29 @@ at 5 AM in the user's local timezone (when `PSYCHEROS_DISPLAY_TZ` is set), or at
 doesn't exist in entity-core (e.g., from a failed MCP write), clears them, and
 re-summarizes.
 
+### Context-Aware Chunking
+
+Active chat days can produce more conversation content than the worker model's
+context window allows. Rather than failing or truncating (which loses memories),
+the summarizer splits conversations into chunks that fit within the token budget
+and summarizes each independently, then merges the bullet points into a single
+memory file.
+
+The budget is calculated from the active profile's `contextLength`: identity
+system message, prompt template, platform activity, custom instructions, output
+reserve (500 tokens), and a safety margin are subtracted to determine how many
+tokens are available for conversation content. Conversations are grouped into
+chunks by accumulating until the budget would be exceeded — a single
+conversation that exceeds the budget on its own gets its own chunk (with a
+warning log). Every conversation is included in exactly one chunk; no memories
+are silently dropped.
+
+If a chunk fails (e.g., the model rejects an oversized single conversation), the
+error is logged and remaining chunks continue. A partial result still produces a
+memory file with whatever was successfully summarized. When no `contextLength`
+is available (no active profile), the summarizer behaves as before with no
+chunking.
+
 ### Discord Integration
 
 Discord activity is integrated into daily memories via a **pre-summarizer** — a

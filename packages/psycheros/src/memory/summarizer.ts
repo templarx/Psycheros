@@ -77,6 +77,11 @@ function withInstanceId(template: string): string {
 }
 
 /**
+ * Rough character-to-token ratio for estimation.
+ */
+const CHARS_PER_TOKEN = 4;
+
+/**
  * Format conversations for the summarization prompt.
  */
 function formatConversationsForPrompt(
@@ -102,6 +107,142 @@ function formatConversationsForPrompt(
   }
 
   return parts.join("\n");
+}
+
+/**
+ * Estimate token count for a set of conversations.
+ */
+function estimateConversationTokens(
+  conversations: ConversationForSummary[],
+): number {
+  return Math.ceil(
+    formatConversationsForPrompt(conversations).length / CHARS_PER_TOKEN,
+  );
+}
+
+/**
+ * Split conversations into chunks that fit within a token budget.
+ * Every conversation is included in exactly one chunk — nothing is dropped.
+ */
+function chunkConversations(
+  conversations: ConversationForSummary[],
+  maxTokens: number,
+): ConversationForSummary[][] {
+  if (conversations.length === 0) return [];
+
+  const chunks: ConversationForSummary[][] = [];
+  let currentChunk: ConversationForSummary[] = [];
+  let currentTokens = 0;
+
+  for (const conv of conversations) {
+    const convTokens = estimateConversationTokens([conv]);
+
+    if (convTokens > maxTokens) {
+      // Flush current chunk before the oversized conversation
+      if (currentChunk.length > 0) {
+        chunks.push(currentChunk);
+        currentChunk = [];
+        currentTokens = 0;
+      }
+      console.warn(
+        `[Memory] Single conversation [chat:${conv.id}] exceeds chunk budget ` +
+          `(~${convTokens} tokens > ${maxTokens} budget). Including alone.`,
+      );
+      chunks.push([conv]);
+      continue;
+    }
+
+    if (currentTokens + convTokens > maxTokens) {
+      chunks.push(currentChunk);
+      currentChunk = [];
+      currentTokens = 0;
+    }
+
+    currentChunk.push(conv);
+    currentTokens += convTokens;
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
+
+/**
+ * Build the summarizer user prompt for a set of conversations.
+ */
+function buildSummarizerPrompt(
+  conversations: ConversationForSummary[],
+  platformActivity?: string,
+  platformChatId?: string,
+  memoryInstructions?: string,
+  customInstructions?: string,
+): string {
+  let prompt = withInstanceId(DAILY_SUMMARY_PROMPT).replace(
+    "{{CONVERSATIONS}}",
+    conversations.length > 0
+      ? formatConversationsForPrompt(conversations)
+      : "(No direct conversations today)",
+  );
+
+  if (platformActivity) {
+    let platformSection =
+      `\nActivity on other platforms [chat:${platformChatId}]:\n` +
+      platformActivity;
+    if (memoryInstructions) {
+      platformSection +=
+        `\n\nWhen writing about these interactions, use these mappings:\n${memoryInstructions}`;
+    }
+    prompt = prompt.replace("{{PLATFORM_ACTIVITY}}", platformSection);
+  } else {
+    prompt = prompt.replace("{{PLATFORM_ACTIVITY}}", "");
+  }
+
+  prompt = prompt.replace(
+    "{{CUSTOM_INSTRUCTIONS}}",
+    customInstructions
+      ? `\nMy additional memory-writing instructions:\n${customInstructions}\n`
+      : "",
+  );
+
+  return prompt;
+}
+
+/**
+ * Stream an LLM response and extract bullet points.
+ */
+async function streamBulletPoints(
+  llm: LLMClient,
+  identitySystemMessage: string,
+  prompt: string,
+): Promise<string[]> {
+  const messages: ChatMessage[] = [
+    { role: "system", content: identitySystemMessage },
+    { role: "user", content: prompt },
+  ];
+
+  let fullResponse = "";
+  try {
+    for await (const part of llm.chatStream(messages)) {
+      if (part.type === "content") {
+        fullResponse += part.content;
+      }
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to generate summary: ${errorMessage}`);
+  }
+
+  const bulletPoints: string[] = [];
+  for (const line of fullResponse.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
+      bulletPoints.push(trimmed.substring(2));
+    }
+  }
+
+  return bulletPoints;
 }
 
 /**
@@ -148,6 +289,8 @@ function collectConversationsForDate(
 
 /**
  * Generate a daily memory summary using the main LLM.
+ * When contextLength is provided, conversations are split into chunks
+ * that fit within the token budget so no memories are lost to overflow.
  */
 async function generateDailySummary(
   conversations: ConversationForSummary[],
@@ -157,72 +300,106 @@ async function generateDailySummary(
   platformChatId?: string,
   memoryInstructions?: string,
   customInstructions?: string,
+  contextLength?: number,
 ): Promise<string[]> {
   if (conversations.length === 0 && !platformActivity) {
     return [];
   }
 
   const identitySystemMessage = await buildIdentitySystemMessage(dataRoot);
-  let prompt = withInstanceId(DAILY_SUMMARY_PROMPT).replace(
-    "{{CONVERSATIONS}}",
-    conversations.length > 0
-      ? formatConversationsForPrompt(conversations)
-      : "(No direct conversations today)",
+
+  // Estimate overhead tokens (everything except conversation content)
+  const identityTokens = Math.ceil(
+    identitySystemMessage.length / CHARS_PER_TOKEN,
+  );
+  const templateTokens = Math.ceil(
+    withInstanceId(DAILY_SUMMARY_PROMPT).length / CHARS_PER_TOKEN,
+  );
+  const platformTokens = platformActivity
+    ? Math.ceil(
+      (
+        `\nActivity on other platforms [chat:${platformChatId}]:\n` +
+        platformActivity +
+        (memoryInstructions
+          ? `\n\nWhen writing about these interactions, use these mappings:\n${memoryInstructions}`
+          : "")
+      ).length / CHARS_PER_TOKEN,
+    )
+    : 0;
+  const instructionsTokens = customInstructions
+    ? Math.ceil(
+      `\nMy additional memory-writing instructions:\n${customInstructions}\n`
+        .length /
+        CHARS_PER_TOKEN,
+    )
+    : 0;
+
+  const outputBudget = 500;
+  const safetyMargin = 500;
+
+  const conversationBudget = contextLength
+    ? Math.max(
+      contextLength - identityTokens - templateTokens - platformTokens -
+        instructionsTokens - outputBudget - safetyMargin,
+      1000,
+    )
+    : Infinity;
+
+  const totalConversationTokens = estimateConversationTokens(conversations);
+  const needsChunking = totalConversationTokens > conversationBudget;
+
+  if (!needsChunking) {
+    const prompt = buildSummarizerPrompt(
+      conversations,
+      platformActivity,
+      platformChatId,
+      memoryInstructions,
+      customInstructions,
+    );
+    return streamBulletPoints(llm, identitySystemMessage, prompt);
+  }
+
+  // Split conversations into chunks that fit the budget
+  const chunks = chunkConversations(conversations, conversationBudget);
+  console.log(
+    `[Memory] Conversation content (~${totalConversationTokens} tokens) exceeds ` +
+      `budget (${conversationBudget} tokens). Splitting into ${chunks.length} chunk(s).`,
   );
 
-  // Inject platform activity section if present
-  if (platformActivity) {
-    let platformSection =
-      `\nActivity on other platforms [chat:${platformChatId}]:\n` +
-      platformActivity;
-    // Append memory instructions so the entity can resolve handles
-    if (memoryInstructions) {
-      platformSection +=
-        `\n\nWhen writing about these interactions, use these mappings:\n${memoryInstructions}`;
-    }
-    prompt = prompt.replace("{{PLATFORM_ACTIVITY}}", platformSection);
-  } else {
-    prompt = prompt.replace("{{PLATFORM_ACTIVITY}}", "");
-  }
+  const allBulletPoints: string[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const chunkTokens = estimateConversationTokens(chunk);
+    console.log(
+      `[Memory] Summarizing chunk ${i + 1}/${chunks.length} ` +
+        `(${chunk.length} conversation(s), ~${chunkTokens} tokens)`,
+    );
 
-  // Inject custom daily memory-writing instructions
-  prompt = prompt.replace(
-    "{{CUSTOM_INSTRUCTIONS}}",
-    customInstructions
-      ? `\nMy additional memory-writing instructions:\n${customInstructions}\n`
-      : "",
-  );
+    const prompt = buildSummarizerPrompt(
+      chunk,
+      platformActivity,
+      platformChatId,
+      memoryInstructions,
+      customInstructions,
+    );
 
-  const messages: ChatMessage[] = [
-    { role: "system", content: identitySystemMessage },
-    { role: "user", content: prompt },
-  ];
-
-  // Collect the full response
-  let fullResponse = "";
-  try {
-    for await (const chunk of llm.chatStream(messages)) {
-      if (chunk.type === "content") {
-        fullResponse += chunk.content;
-      }
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    throw new Error(`Failed to generate summary: ${errorMessage}`);
-  }
-
-  // Parse bullet points from response
-  const bulletPoints: string[] = [];
-  const lines = fullResponse.split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    // Accept lines starting with "- " or "* "
-    if (trimmed.startsWith("- ") || trimmed.startsWith("* ")) {
-      bulletPoints.push(trimmed.substring(2));
+    try {
+      const bulletPoints = await streamBulletPoints(
+        llm,
+        identitySystemMessage,
+        prompt,
+      );
+      allBulletPoints.push(...bulletPoints);
+    } catch (error) {
+      console.error(
+        `[Memory] Chunk ${i + 1}/${chunks.length} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }. Continuing with remaining chunks.`,
+      );
     }
   }
 
-  return bulletPoints;
+  return allBulletPoints;
 }
 
 /**
@@ -359,6 +536,7 @@ export async function summarizeDay(
       discordSyntheticChatId || undefined,
       discordMemoryInstructions || undefined,
       customInstructions || undefined,
+      options?.activeProfile?.contextLength,
     );
 
     if (bulletPoints.length === 0) {
