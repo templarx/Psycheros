@@ -96,10 +96,51 @@ export async function catchUpSummarization(
     ? getLogicalDateNow(tz, cutoffHour)
     : new Date().toISOString().split("T")[0];
 
+  // Fetch daily memory dates from entity-core to avoid re-summarizing
+  // dates that Psycheros or entity-loom already handled. Only skip dates
+  // where the memory's sourceInstance matches our own instance or
+  // "entity-loom" — other embodiments (e.g. SillyTavern) are not counted
+  // since Psycheros may still need its own catch-up for that date.
+  const psycherosInstance = Deno.env.get("PSYCHEROS_MCP_INSTANCE") ||
+    "psycheros";
+  const ownedCoreDates = new Set<string>();
+  try {
+    let offset = 0;
+    const pageSize = 100;
+    while (true) {
+      const result = await mcpClient.listMemories("daily", pageSize, {
+        offset,
+      });
+      if (result.memories.length === 0) break;
+      for (const m of result.memories) {
+        if (
+          m.sourceInstance === psycherosInstance ||
+          m.sourceInstance === "entity-loom"
+        ) {
+          ownedCoreDates.add(m.date.split("_")[0]);
+        }
+      }
+      offset += pageSize;
+      if (offset >= result.total) break;
+    }
+  } catch {
+    // MCP unavailable — proceed without checking entity-core
+  }
+
   let summarized = 0;
   for (const date of unsummarizedDates) {
     // Don't summarize today (still in progress)
     if (date === today) continue;
+
+    // Skip dates where Psycheros or entity-loom already created a daily
+    // memory. Record locally so we don't re-check on every startup.
+    if (ownedCoreDates.has(date)) {
+      console.log(
+        `[Memory] Date ${date} already has an owned memory in entity-core, skipping`,
+      );
+      db.upsertMemorySummary(date, "daily", `entity-core://${date}`, []);
+      continue;
+    }
 
     console.log(`[Memory] Catching up on ${date}...`);
     const memoryFile = await summarizeDay(

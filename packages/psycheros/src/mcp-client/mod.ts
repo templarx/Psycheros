@@ -156,7 +156,7 @@ export class MCPClient {
   private pingTimer: number | null = null;
   private pingInterval = 30000; // 30 seconds
   private wasAlive = true;
-  private toolCallTimeoutMs = 30_000; // 30 seconds default for tool calls
+  private toolCallTimeoutMs = 60_000; // 60 seconds default for tool calls
   private pingTimeoutMs = 5_000; // 5 seconds for health probes
   /**
    * Auto-reconnect state. When the health ping detects entity-core is
@@ -651,7 +651,7 @@ export class MCPClient {
     try {
       const result = await this.callToolWithTimeout("sync_pull", {
         instanceId: this.config.instanceId,
-      });
+      }, 300_000);
 
       const textContent = extractTextContent(result);
       if (textContent) {
@@ -1473,7 +1473,14 @@ export class MCPClient {
     options?: { offset?: number; beforeDate?: string; afterDate?: string },
   ): Promise<
     {
-      memories: Array<{ granularity: string; date: string; preview: string }>;
+      memories: Array<
+        {
+          granularity: string;
+          date: string;
+          preview: string;
+          sourceInstance?: string;
+        }
+      >;
       total: number;
     }
   > {

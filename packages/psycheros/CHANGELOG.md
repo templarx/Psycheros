@@ -4,6 +4,21 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.8] - 2026-05-27
+
+### Fixed
+
+- **MCP client timeouts no longer crash-loop entity-core on slow machines.** The
+  default `toolCallTimeoutMs` was 30 s, too short for `sync_pull` on Windows
+  machines with many memory files. Default raised to 60 s, with `sync_pull`
+  using an explicit 300 s timeout.
+- **Daily memory catch-up no longer creates duplicates after entity-loom
+  imports.** `catchUpSummarization()` now queries entity-core for existing daily
+  memories but only skips dates where the memory's `sourceInstance` matches
+  Psycheros or `entity-loom` — memories from other embodiments (SillyTavern)
+  don't block Psycheros from creating its own summary for the same date. Matched
+  dates are recorded locally so re-checks don't repeat on every startup.
+
 ## [0.4.7] - 2026-05-27
 
 ### Added
@@ -400,6 +415,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.4.8]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.8
 [0.4.7]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.7
 [0.4.6]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.6
 [0.4.5]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.5
