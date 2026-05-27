@@ -4,6 +4,17 @@ All notable changes to the Psycheros harness daemon are documented here. The
 format follows [Keep a Changelog](https://keepachangelog.com/), and this package
 follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.10] - 2026-05-27
+
+### Fixed
+
+- **Corrupted sqlite-vec virtual tables are now repaired automatically on
+  startup.** If `vec_memory_chunks`, `vec_messages`, or `vec_vault_chunks` are
+  corrupted (e.g. from a crash during write), the vector sync check now catches
+  the error, drops and recreates the virtual table, and rebuilds from the
+  backing regular tables. Previously the error was logged and vector search fell
+  back to in-memory permanently until the user manually deleted the database.
+
 ## [0.4.9] - 2026-05-27
 
 ### Fixed
@@ -428,6 +439,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.4.10]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.10
 [0.4.9]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.9
 [0.4.8]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.8
 [0.4.7]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.7

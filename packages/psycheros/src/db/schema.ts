@@ -1183,9 +1183,22 @@ function verifyVectorTableSync(db: Database): void {
     .prepare("SELECT COUNT(*) as count FROM memory_chunks")
     .get<{ count: number }>()?.count ?? 0;
 
-  const vecMemoryCount = db
-    .prepare("SELECT COUNT(*) as count FROM vec_memory_chunks")
-    .get<{ count: number }>()?.count ?? 0;
+  let vecMemoryCount = 0;
+  try {
+    vecMemoryCount = db
+      .prepare("SELECT COUNT(*) as count FROM vec_memory_chunks")
+      .get<{ count: number }>()?.count ?? 0;
+  } catch {
+    console.warn(
+      "[DB] vec_memory_chunks is corrupted, dropping and recreating",
+    );
+    try {
+      db.exec("DROP TABLE IF EXISTS vec_memory_chunks");
+    } catch { /* ignore */ }
+    db.exec(
+      `CREATE VIRTUAL TABLE vec_memory_chunks USING vec0(embedding FLOAT[${EMBEDDING_DIMENSION}] distance=cosine)`,
+    );
+  }
 
   if (memoryChunksCount !== vecMemoryCount) {
     console.warn(
@@ -1221,9 +1234,22 @@ function verifyVectorTableSync(db: Database): void {
     .prepare("SELECT COUNT(*) as count FROM message_embeddings")
     .get<{ count: number }>()?.count ?? 0;
 
-  const vecMessagesCount = db
-    .prepare("SELECT COUNT(*) as count FROM vec_messages")
-    .get<{ count: number }>()?.count ?? 0;
+  let vecMessagesCount = 0;
+  try {
+    vecMessagesCount = db
+      .prepare("SELECT COUNT(*) as count FROM vec_messages")
+      .get<{ count: number }>()?.count ?? 0;
+  } catch {
+    console.warn(
+      "[DB] vec_messages is corrupted, dropping and recreating",
+    );
+    try {
+      db.exec("DROP TABLE IF EXISTS vec_messages");
+    } catch { /* ignore */ }
+    db.exec(
+      `CREATE VIRTUAL TABLE vec_messages USING vec0(embedding FLOAT[${EMBEDDING_DIMENSION}] distance=cosine)`,
+    );
+  }
 
   if (messageEmbeddingsCount !== vecMessagesCount) {
     console.warn(
@@ -1260,9 +1286,22 @@ function verifyVectorTableSync(db: Database): void {
     .prepare("SELECT COUNT(*) as count FROM vault_chunks")
     .get<{ count: number }>()?.count ?? 0;
 
-  const vecVaultCount = db
-    .prepare("SELECT COUNT(*) as count FROM vec_vault_chunks")
-    .get<{ count: number }>()?.count ?? 0;
+  let vecVaultCount = 0;
+  try {
+    vecVaultCount = db
+      .prepare("SELECT COUNT(*) as count FROM vec_vault_chunks")
+      .get<{ count: number }>()?.count ?? 0;
+  } catch {
+    console.warn(
+      "[DB] vec_vault_chunks is corrupted, dropping and recreating",
+    );
+    try {
+      db.exec("DROP TABLE IF EXISTS vec_vault_chunks");
+    } catch { /* ignore */ }
+    db.exec(
+      `CREATE VIRTUAL TABLE vec_vault_chunks USING vec0(embedding FLOAT[${EMBEDDING_DIMENSION}] distance=cosine)`,
+    );
+  }
 
   if (vaultChunksCount !== vecVaultCount) {
     console.warn(
