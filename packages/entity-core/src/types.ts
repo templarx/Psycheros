@@ -237,7 +237,7 @@ export interface ServerConfig {
 export const DEFAULT_SERVER_CONFIG: ServerConfig = {
   dataDir: "./data",
   ragEnabled: true,
-  ragMinScore: 0.3,
+  ragMinScore: 0.2,
   ragMaxChunks: 10,
   ragMaxTokens: 2000,
   instanceBoost: 0.1,

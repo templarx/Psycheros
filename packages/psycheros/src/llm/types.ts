@@ -25,10 +25,10 @@ export interface LLMConfig {
   /** Whether to enable chain-of-thought reasoning */
   thinkingEnabled: boolean;
   /**
-   * Provider type. Only "custom" providers (e.g. Z.ai) send the
-   * thinking: { type: "enabled" } parameter. Other providers (OpenRouter,
-   * OpenAI, etc.) may still return reasoning_content in SSE chunks
-   * without needing this parameter.
+   * Provider type. Used to gate provider-specific request parameters:
+   * - "zai" / "nanogpt": send `thinking: { type: "enabled" }`
+   * - "openrouter": send `reasoning: {}`
+   * Other providers may still return reasoning in SSE deltas automatically.
    */
   provider?: string;
   /** Default sampling temperature (0-2) */
@@ -75,7 +75,15 @@ export interface ChatRequest {
   model: string;
   messages: ChatMessage[];
   stream: boolean;
+  /** Z.ai / NanoGPT: enables chain-of-thought reasoning */
   thinking?: { type: "enabled" | "disabled" };
+  /** OpenRouter: controls reasoning token behavior */
+  reasoning?: {
+    enabled?: boolean;
+    effort?: string;
+    max_tokens?: number;
+    exclude?: boolean;
+  };
   tools?: ToolDefinition[];
   tool_choice?: "auto";
   temperature?: number;
@@ -100,6 +108,18 @@ export interface ChatDelta {
   reasoning_content?: string;
   /** Alternative field name used by some providers for reasoning */
   reasoning?: string;
+  /** Claude via OpenRouter returns thinking in this field */
+  thinking?: string;
+  /** OpenRouter structured reasoning details */
+  reasoning_details?: Array<{
+    type: string;
+    text?: string;
+    summary?: string;
+    data?: string;
+    id?: string | null;
+    format?: string;
+    index?: number;
+  }>;
   tool_calls?: Array<{
     index: number;
     id?: string;

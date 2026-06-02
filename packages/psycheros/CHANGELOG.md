@@ -6,6 +6,24 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-06-01
+
+### Added
+
+- Model-family detection and parameter filtering: unsupported sampling
+  parameters (e.g. `temperature` on o-series models) are automatically stripped
+  per-provider, with OpenRouter-specific headers injected.
+- Export zip filename now includes the entity name for easier identification.
+
+### Fixed
+
+- Provider-aware reasoning parameters: reasoning effort and response parsing now
+  adapt per-model-family instead of assuming OpenAI-shaped responses.
+- MCP transport connects before embedding rebuild, preventing 60-second
+  handshake timeouts on startup.
+- Replaced jsdom with sanitize-html for markdown rendering, fixing V8 CodeRange
+  OOM crashes on macOS Tahoe.
+
 ## [0.4.12] - 2026-05-29
 
 ### Changed
@@ -505,6 +523,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.5.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.5.0
 [0.4.12]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.12
 [0.4.11]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.11
 [0.4.10]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.4.10

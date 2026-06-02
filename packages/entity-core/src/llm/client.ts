@@ -80,6 +80,19 @@ function usesMaxCompletionTokens(model: string): boolean {
 }
 
 /**
+ * Detect whether a model supports the `temperature` parameter.
+ *
+ * OpenAI o-series reasoning models reject temperature with HTTP 400.
+ * DeepSeek reasoner ignores it silently but I strip it for cleanliness.
+ */
+function modelSupportsTemperature(model: string): boolean {
+  const lower = model.toLowerCase();
+  if (/^o[134]/.test(lower)) return false;
+  if (/deepseek-r/.test(lower)) return false;
+  return true;
+}
+
+/**
  * Simple LLM client for entity-core.
  * Provides non-streaming completion for background tasks.
  */
@@ -209,7 +222,13 @@ export class LLMClient {
     // Use option override, then config default
     const temperature = options?.temperature ?? this.config.temperature;
     if (temperature !== undefined) {
-      body.temperature = temperature;
+      if (modelSupportsTemperature(this.config.model)) {
+        body.temperature = temperature;
+      } else {
+        console.warn(
+          `[LLM] Model "${this.config.model}" does not support temperature — stripped from request`,
+        );
+      }
     }
 
     const maxTokens = options?.maxTokens ?? this.config.maxTokens;

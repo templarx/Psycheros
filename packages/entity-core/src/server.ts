@@ -70,7 +70,9 @@ import { EmbeddingCache } from "./embeddings/mod.ts";
 /**
  * Create and configure the MCP server.
  */
-export function createServer(config: Partial<ServerConfig> = {}): McpServer {
+export function createServer(
+  config: Partial<ServerConfig> = {},
+): { server: McpServer; embeddingCache: EmbeddingCache } {
   const fullConfig: ServerConfig = { ...DEFAULT_SERVER_CONFIG, ...config };
 
   // Storage. Reuse the caller's instances when provided — the main
@@ -1330,7 +1332,7 @@ export function createServer(config: Partial<ServerConfig> = {}): McpServer {
     },
   );
 
-  return server;
+  return { server, embeddingCache };
 }
 
 /**
@@ -1339,41 +1341,45 @@ export function createServer(config: Partial<ServerConfig> = {}): McpServer {
 export async function startServer(
   config: Partial<ServerConfig> = {},
 ): Promise<void> {
-  const server = createServer(config);
+  const fullConfig: ServerConfig = { ...DEFAULT_SERVER_CONFIG, ...config };
+  const { server, embeddingCache } = createServer(config);
   const transport = new StdioServerTransport();
 
-  // Auto-rebuild embeddings if schema version changed (e.g., date enrichment
-  // added). This runs before connecting so the entity-core process handles it
-  // on startup rather than silently serving stale vectors.
-  const fullConfig: ServerConfig = { ...DEFAULT_SERVER_CONFIG, ...config };
-  await autoRebuildEmbeddings(fullConfig.dataDir);
-
+  // Connect the transport first so the MCP handshake completes before any
+  // potentially slow startup work (e.g. embedding rebuilds). Otherwise the
+  // 60-second handshake timeout fires and the embodiment disconnects.
   await server.connect(transport);
 
   console.error("Entity Core MCP server started");
   console.error(
     "I am ready to sync my identity and memories with my embodiments.",
   );
+
+  // Auto-rebuild embeddings if schema version changed (e.g., date enrichment
+  // added). Uses the server's EmbeddingCache so there's a single connection
+  // touching the vec table during rebuild — no concurrent-writes race.
+  await autoRebuildEmbeddings(fullConfig, embeddingCache);
 }
 
 /**
  * Check if cached embeddings need rebuilding (schema version mismatch)
  * and run a full rebuild if so. No-op when embeddings are up-to-date.
+ *
+ * Uses the server's shared EmbeddingCache to avoid a second connection
+ * racing against tool calls during startup.
  */
-async function autoRebuildEmbeddings(dataDir: string): Promise<void> {
-  const cache = new EmbeddingCache(dataDir);
+async function autoRebuildEmbeddings(
+  config: ServerConfig,
+  cache: EmbeddingCache,
+): Promise<void> {
   await cache.initialize();
 
-  if (!cache.needsRebuild()) {
-    cache.close();
-    return;
-  }
+  if (!cache.needsRebuild()) return;
 
   const stats = cache.getStats();
   if (stats.totalCached === 0) {
     // Nothing cached — nothing to rebuild, just mark version
     cache.markSchemaUpToDate();
-    cache.close();
     return;
   }
 
@@ -1381,7 +1387,7 @@ async function autoRebuildEmbeddings(dataDir: string): Promise<void> {
     `[Embeddings] Schema version changed — rebuilding ${stats.totalCached} memory embeddings...`,
   );
 
-  const store = new FileStore(dataDir);
+  const store = config.store ?? new FileStore(config.dataDir);
   await store.initialize();
 
   const handler = createMemoryEmbeddingRebuildHandler(store, cache);
@@ -1393,5 +1399,4 @@ async function autoRebuildEmbeddings(dataDir: string): Promise<void> {
 
   // Mark schema version as current so we don't rebuild on next startup
   cache.markSchemaUpToDate();
-  cache.close();
 }

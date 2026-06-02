@@ -668,12 +668,15 @@ entity-core data is missing, so imported archives are always auditable.
 **Import** accepts the same zip format. It clears existing Psycheros data
 (conversations, lorebooks, vault, images) before restoring, then sends
 entity-core data through MCP's `entity_import` tool. After a successful import,
-MCP is restarted and a sync pull runs automatically.
+a sync pull runs on the existing MCP connection (the import handler reopens DB
+connections internally, so no restart is needed). MCP is restarted only as a
+fallback if the pull fails.
 
 **API endpoints:**
 
-- `POST /api/admin/entity-data/export` — full export (returns zip or partial
-  error JSON)
+- `POST /api/admin/entity-data/export` — full export; zip filename includes the
+  entity name (e.g. `my-entity-export-2026-06-01T12-34-56.zip`). Returns zip or
+  partial error JSON
 - `POST /api/admin/entity-data/export?partial=1` — skip entity-core, export
   Psycheros-only data
 - `POST /api/admin/entity-data/import` — import from zip

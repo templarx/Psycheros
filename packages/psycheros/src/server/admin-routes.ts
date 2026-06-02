@@ -526,11 +526,25 @@ export async function handleAdminEntityDataExport(
       0,
       19,
     );
+
+    let entityName = "entity";
+    try {
+      const raw = await Deno.readTextFile(
+        join(ctx.dataRoot, ".psycheros/general-settings.json"),
+      );
+      const saved = JSON.parse(raw) as { entityName?: string };
+      if (saved.entityName) {
+        entityName = saved.entityName.toLowerCase().replace(/\s+/g, "-");
+      }
+    } catch {
+      // Settings file missing or malformed — fall back to default name
+    }
+
     return new Response(result.zipBytes.buffer as ArrayBuffer, {
       headers: {
         "Content-Type": "application/zip",
         "Content-Disposition":
-          `attachment; filename="entity-export-${timestamp}.zip"`,
+          `attachment; filename="${entityName}-export-${timestamp}.zip"`,
       },
     });
   } catch (error) {

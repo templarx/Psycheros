@@ -31,6 +31,56 @@ The agentic loop is in `src/entity/loop.ts` — LLM call, tool execution, contex
 capture, image and tool-arg fading. The chat HTTP route in
 `src/server/routes.ts` calls into it and streams SSE back to the browser.
 
+## LLM client and model capabilities
+
+`src/llm/client.ts` is the OpenAI-compatible LLM client. It handles chat
+completion (streaming and non-streaming), provider-specific headers, and model
+parameter filtering.
+
+**Model capabilities** (`src/llm/model-capabilities.ts`) — an ordered array of
+model-family rules that detects which sampling parameters a model supports from
+its name string. First match wins. `filterSamplingParams()` strips unsupported
+parameters before the API call and logs what was removed. Unknown models get a
+permissive default (send everything). The rules cover OpenAI o-series/GPT,
+Claude, DeepSeek, Gemini, Qwen, GLM, Llama, Mistral, Kimi, and Gemma — including
+OpenRouter-prefixed names like `anthropic/claude-sonnet-4-20250514`.
+
+**Reasoning parameters** are gated on provider in `buildRequest()`:
+
+- **Z.ai / NanoGPT**: sends `thinking: { type: "enabled" }` — enables Z.ai's
+  chain-of-thought return.
+- **OpenRouter**: sends `reasoning: {}` — tells OpenRouter to return reasoning
+  tokens (ignored without it).
+- **Other providers**: no parameter sent; reasoning tokens returned
+  automatically if the model supports them.
+
+**Reasoning response parsing** in `processChunk()` checks four SSE delta fields
+in priority order: `reasoning_content` (Z.ai), `reasoning`
+(OpenRouter/DeepSeek), `thinking` (Claude via OpenRouter), `reasoning_details`
+(OpenRouter structured array — extracts `text` from entries with
+`type: "reasoning.text"`). Adding a new provider that returns reasoning in a
+different field means extending this chain.
+
+`buildProviderHeaders()` adds provider-specific HTTP headers:
+
+- **OpenRouter**: `HTTP-Referer` + `X-Title` (required, or requests fail with
+  "Missing Authentication header")
+- **Anthropic**: `anthropic-beta: prompt-caching-2024-07-31`
+
+## HTMX inline scripts
+
+HTMX 2.x does not reliably re-execute `<script>` tags inside swapped fragments.
+Functions called from `onclick` handlers in HTMX-swapped fragments must live in
+`web/js/psycheros.js` (loaded once, persists across swaps). That file is loaded
+as `type="module"`, so top-level function declarations are module-scoped — any
+function referenced from inline `onclick` must be explicitly exported via
+`globalThis.functionName = functionName`.
+
+Server data that fragment JS needs (e.g., provider presets) should be embedded
+using `<script type="application/json" id="...">` tags or
+`<input type="hidden">` fields in the HTML fragment, not inline `<script>`
+assignments.
+
 ## Adding a built-in tool
 
 A tool isn't fully wired until **all seven** of these are in place. The Pulse

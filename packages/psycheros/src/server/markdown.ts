@@ -1,10 +1,17 @@
 import { marked } from "marked";
-import DOMPurify from "dompurify";
-import { JSDOM } from "jsdom";
+import sanitizeHtml from "sanitize-html";
 
-// Create a DOM for DOMPurify to work with
-const jsdom = new JSDOM("");
-const purify = DOMPurify(jsdom.window);
+const sanitizerOptions = {
+  allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "del"],
+  allowedAttributes: {
+    ...sanitizeHtml.defaults.allowedAttributes,
+    img: ["src", "alt", "title", "width", "height"],
+    code: ["class"],
+    pre: ["class"],
+    span: ["class"],
+    div: ["class"],
+  },
+};
 
 // Configure marked for Deno-compatible settings
 marked.setOptions({
@@ -75,7 +82,7 @@ function stripEntityXml(text: string): string {
 
 /**
  * Parse markdown to sanitized HTML.
- * Strips LLM XML artifacts first, then uses DOMPurify to prevent XSS.
+ * Strips LLM XML artifacts first, then sanitizes to prevent XSS.
  *
  * @param text - Raw markdown text
  * @returns Sanitized HTML string
@@ -85,5 +92,5 @@ export function renderMarkdown(text: string): string {
   const cleaned = stripEntityXml(text);
   if (!cleaned.trim()) return "";
   const html = marked.parse(cleaned) as string;
-  return purify.sanitize(html);
+  return sanitizeHtml(html, sanitizerOptions);
 }

@@ -33,6 +33,17 @@ export {
   LLM_PROVIDER_PRESETS,
 } from "./provider-presets.ts";
 
+// Re-export model capabilities
+export type {
+  FilterResult,
+  ModelFamilyCapabilities,
+  SamplingParam,
+} from "./model-capabilities.ts";
+export {
+  detectModelCapabilities,
+  filterSamplingParams,
+} from "./model-capabilities.ts";
+
 // Re-export settings
 export type { LLMSettings } from "./settings.ts";
 export {

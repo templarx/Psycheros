@@ -4371,3 +4371,251 @@ globalThis.loadMoreMemories = function(granularity, offset) {
       console.error('Failed to load more memories:', e);
     });
 };
+
+// =============================================================================
+// LLM Profile Edit — moved from inline script for HTMX swap reliability.
+// Inline scripts in HTMX-swapped fragments don't reliably re-execute on
+// subsequent swaps, so these functions live here where they persist across
+// all fragment swaps.
+// =============================================================================
+
+/**
+ * Read the provider presets embedded by the server as a JSON script tag.
+ * Returns null if the tag isn't in the current DOM (e.g., not on the LLM page).
+ */
+function getLLMProviderPresets() {
+  var tag = document.getElementById('llm-provider-presets-data');
+  if (!tag) return null;
+  try { return JSON.parse(tag.textContent); } catch { return null; }
+}
+
+var llmApiKeyVisible = false;
+
+function toggleApiKeyVisibility() {
+  var input = document.getElementById('llm-api-key');
+  if (!input) return;
+  llmApiKeyVisible = !llmApiKeyVisible;
+  input.type = llmApiKeyVisible ? 'text' : 'password';
+}
+
+function onProviderChange() {
+  var provider = document.getElementById('llm-provider').value;
+  var presets = getLLMProviderPresets();
+  var preset = presets ? presets[provider] : null;
+  var isNew = document.getElementById('llm-is-new')?.value === 'true';
+  if (preset) {
+    if (preset.baseUrl) {
+      document.getElementById('llm-base-url').value = preset.baseUrl;
+    }
+    if (preset.defaultModel && isNew) {
+      document.getElementById('llm-model').value = preset.defaultModel;
+    }
+    if (preset.defaultWorkerModel && isNew) {
+      document.getElementById('llm-worker-model').value = preset.defaultWorkerModel;
+    }
+    if (isNew) {
+      document.getElementById('llm-name').value = preset.label;
+    }
+    var thinkingNote = document.getElementById('thinking-provider-note');
+    if (thinkingNote) {
+      thinkingNote.style.display = preset.supportsThinking ? 'none' : 'block';
+    }
+    document.getElementById('llm-thinking').checked = preset.supportsThinking;
+  }
+}
+
+function gatherProfile() {
+  return {
+    id: document.getElementById('llm-profile-id').value || crypto.randomUUID(),
+    name: document.getElementById('llm-name').value.trim() || 'Unnamed Profile',
+    provider: document.getElementById('llm-provider').value,
+    baseUrl: document.getElementById('llm-base-url').value.trim(),
+    apiKey: document.getElementById('llm-api-key').value.trim(),
+    model: document.getElementById('llm-model').value.trim(),
+    workerModel: document.getElementById('llm-worker-model').value.trim(),
+    temperature: parseFloat(document.getElementById('llm-temperature').value),
+    topP: parseFloat(document.getElementById('llm-top-p').value),
+    topK: parseInt(document.getElementById('llm-top-k').value) || 0,
+    frequencyPenalty: parseFloat(document.getElementById('llm-freq-penalty').value),
+    presencePenalty: parseFloat(document.getElementById('llm-pres-penalty').value),
+    maxTokens: parseInt(document.getElementById('llm-max-tokens').value) || 4096,
+    contextLength: parseInt(document.getElementById('llm-context-length').value) || 128000,
+    thinkingEnabled: document.getElementById('llm-thinking').checked,
+  };
+}
+
+function showLLMStatus(type, message) {
+  var el = document.getElementById('llm-status');
+  if (!el) return;
+  el.style.display = 'block';
+  el.className = 'llm-status ' + type;
+  el.textContent = message;
+}
+
+async function saveProfile(event) {
+  var btn = event.currentTarget;
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  showLLMStatus('loading', 'Saving profile...');
+
+  try {
+    var profile = gatherProfile();
+    var saveResp = await fetch('/api/llm-settings/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profile }),
+    });
+    var data = await saveResp.json();
+    if (data.success) {
+      htmx.ajax('GET', '/fragments/settings/llm', { target: '#chat', swap: 'innerHTML' });
+    } else {
+      showLLMStatus('error', 'Failed to save: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    showLLMStatus('error', 'Failed to save: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Save Profile';
+  }
+}
+
+async function testProfileConnection() {
+  var btn = document.getElementById('test-connection-btn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  showLLMStatus('loading', 'Sending test request...');
+
+  try {
+    var profile = gatherProfile();
+    var resp = await fetch('/api/llm-settings/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(profile),
+    });
+    var data = await resp.json();
+    if (data.success) {
+      showLLMStatus('success', 'Connection successful! (' + data.latency + 'ms)');
+    } else {
+      showLLMStatus('error', 'Connection failed: ' + (data.error || 'Unknown error') + (data.latency ? ' (' + data.latency + 'ms)' : ''));
+    }
+  } catch (e) {
+    showLLMStatus('error', 'Connection failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Test Connection';
+  }
+}
+
+async function setAsActive(profileId) {
+  showLLMStatus('loading', 'Switching active profile...');
+  try {
+    var resp = await fetch('/api/llm-settings/set-active', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ profileId }),
+    });
+    var data = await resp.json();
+    if (data.success) {
+      htmx.ajax('GET', '/fragments/settings/llm', { target: '#chat', swap: 'innerHTML' });
+    } else {
+      showLLMStatus('error', 'Failed to switch: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    showLLMStatus('error', 'Failed to switch: ' + e.message);
+  }
+}
+
+async function deleteProfile(profileId) {
+  var btn = document.getElementById('delete-profile-btn');
+  if (!btn) return;
+  if (!btn.dataset.confirming) {
+    btn.dataset.confirming = 'true';
+    btn.textContent = 'Confirm Delete?';
+    btn.classList.add('btn--danger');
+    btn.classList.remove('btn--ghost');
+    setTimeout(function() {
+      if (btn.dataset.confirming) {
+        delete btn.dataset.confirming;
+        btn.textContent = 'Delete Profile';
+        btn.classList.remove('btn--danger');
+        btn.classList.add('btn--ghost');
+      }
+    }, 3000);
+    return;
+  }
+  delete btn.dataset.confirming;
+  btn.disabled = true;
+  btn.textContent = 'Deleting...';
+  showLLMStatus('loading', 'Deleting profile...');
+
+  try {
+    var resp = await fetch('/api/llm-settings', {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    var settings = await resp.json();
+
+    if (settings.profiles.length <= 1) {
+      showLLMStatus('error', 'Cannot delete the only profile.');
+      btn.disabled = false;
+      btn.textContent = 'Delete Profile';
+      btn.classList.remove('btn--danger');
+      btn.classList.add('btn--ghost');
+      return;
+    }
+
+    settings.profiles = settings.profiles.filter(function(p) { return p.id !== profileId; });
+    if (settings.activeProfileId === profileId) {
+      settings.activeProfileId = settings.profiles[0].id;
+    }
+
+    var saveResp = await fetch('/api/llm-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    var data = await saveResp.json();
+    if (data.success) {
+      htmx.ajax('GET', '/fragments/settings/llm', { target: '#chat', swap: 'innerHTML' });
+    } else {
+      showLLMStatus('error', 'Failed to delete: ' + (data.error || 'Unknown error'));
+    }
+  } catch (e) {
+    showLLMStatus('error', 'Failed to delete: ' + e.message);
+  }
+}
+
+/**
+ * Initialize the LLM profile edit form after HTMX swap.
+ * Sets up provider note visibility based on the current provider.
+ */
+function initLLMProfileEdit() {
+  if (!document.getElementById('llm-provider')) return; // not on the profile edit page
+  var presets = getLLMProviderPresets();
+  var provider = document.getElementById('llm-provider').value;
+  var preset = presets ? presets[provider] : null;
+  var thinkingNote = document.getElementById('thinking-provider-note');
+  if (thinkingNote && preset) {
+    thinkingNote.style.display = preset.supportsThinking ? 'none' : 'block';
+  }
+}
+
+// Re-initialize after HTMX swaps the profile edit form
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target?.id === 'chat') {
+    initLLMProfileEdit();
+  }
+});
+
+// Also initialize on DOMContentLoaded for full page loads
+document.addEventListener('DOMContentLoaded', initLLMProfileEdit);
+
+// Expose LLM profile functions to global scope for onclick handlers in HTML.
+// psycheros.js is loaded as a module, so top-level declarations are module-scoped.
+globalThis.toggleApiKeyVisibility = toggleApiKeyVisibility;
+globalThis.onProviderChange = onProviderChange;
+globalThis.saveProfile = saveProfile;
+globalThis.testProfileConnection = testProfileConnection;
+globalThis.setAsActive = setAsActive;
+globalThis.deleteProfile = deleteProfile;

@@ -59,6 +59,10 @@ event directly.
 
 Each `src/*/` has a `mod.ts` barrel.
 
+- `src/llm/` — OpenAI-compatible client. `buildCachingHeaders()` adds
+  provider-specific headers (Anthropic prompt-caching beta, OpenRouter
+  `HTTP-Referer`/`X-Title`). `modelSupportsTemperature()` guards temperature for
+  models that reject it (OpenAI o-series, DeepSeek reasoner).
 - `src/server/` — HTTP, SSE, router, logger, cost estimator, stage-lock
 - `src/stages/` — one file per wizard stage
 - `src/parsers/` — one file per platform; ChatGPT is split into a dispatcher

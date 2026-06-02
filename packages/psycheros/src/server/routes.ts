@@ -41,6 +41,7 @@ import {
   maskWebSearchSettings,
 } from "../llm/mod.ts";
 import { getActiveProfile } from "../llm/settings.ts";
+import { detectModelCapabilities } from "../llm/model-capabilities.ts";
 import {
   loadMemorySettings,
   saveMemorySettings,
@@ -5279,13 +5280,10 @@ export async function handleResetLLMSettings(
 
 /**
  * Determine whether a model requires `max_completion_tokens` instead of `max_tokens`.
- * OpenAI's newer models (o-series, gpt-5.x) reject `max_tokens` outright.
+ * Delegates to the centralized model capabilities detection.
  */
 function usesMaxCompletionTokensParam(model: string): boolean {
-  const lower = model.toLowerCase();
-  if (/^o[134]/.test(lower)) return true;
-  if (/^gpt-5/.test(lower)) return true;
-  return false;
+  return detectModelCapabilities(model).usesMaxCompletionTokens;
 }
 
 /**
@@ -5352,18 +5350,26 @@ export async function handleTestLLMConnection(
 
     const startTime = performance.now();
 
+    const providerHeaders: Record<string, string> = {};
+    if (baseUrl.toLowerCase().includes("openrouter.ai")) {
+      providerHeaders["HTTP-Referer"] =
+        "https://github.com/anthropics/psycheros";
+      providerHeaders["X-Title"] = "Psycheros";
+    }
+
     const response = await fetch(baseUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
+        ...providerHeaders,
       },
       body: JSON.stringify({
         model: model || "test",
         messages: [{ role: "user", content: "Hi" }],
         ...usesMaxCompletionTokensParam(model || "test")
-          ? { max_completion_tokens: 5 }
-          : { max_tokens: 5 },
+          ? { max_completion_tokens: 50 }
+          : { max_tokens: 50 },
         stream: false,
       }),
     });

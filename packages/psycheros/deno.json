@@ -1,11 +1,10 @@
 {
   "name": "@psycheros/daemon",
-  "version": "0.4.12",
+  "version": "0.5.0",
   "exports": "./src/main.ts",
   "imports": {
     "marked": "npm:marked@^15",
-    "dompurify": "npm:dompurify@^3",
-    "jsdom": "npm:jsdom@^26",
+    "sanitize-html": "npm:sanitize-html@^2",
     "pdf-parse": "npm:pdf-parse@^1.1.1",
     "mammoth": "npm:mammoth@^1.8.0",
     "xlsx": "npm:xlsx@^0.18.5",

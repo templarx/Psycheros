@@ -90,10 +90,11 @@ data/memories/
 
 ## Memory Search & Retrieval
 
-`memory_search` uses per-sentence embedding and multi-signal ranking:
+`memory_search` uses per-sentence embedding with multi-signal ranking and a
+keyword retrieval phase:
 
 ```
-finalScore = (vectorScore × 0.8) + (recencyScore × 0.05) + (graphBoost × 0.05) + (instanceScore × 0.1)
+finalScore = (vectorScore × 0.6) + (recencyScore × 0.05) + (graphBoost × 0.05) + (keywordBoost × 0.2) + (instanceScore × 0.1)
 ```
 
 ### Per-Sentence Embedding
@@ -104,14 +105,27 @@ per memory). This handles natural conversation where the actual topic is
 embedded in a longer message alongside pleasantries and context. Capped at 5
 sentences.
 
+### Scoring Signals
+
 | Signal                | Weight | Description                                                       |
 | --------------------- | ------ | ----------------------------------------------------------------- |
-| **Vector similarity** | 0.8    | Semantic match via embeddings (all-MiniLM-L6-v2, 384 dims)        |
+| **Vector similarity** | 0.6    | Semantic match via embeddings (all-MiniLM-L6-v2, 384 dims)        |
 | **Recency**           | 0.05   | Inverse decay: `1 / (1 + age_days × 0.007)` — half-life ~100 days |
 | **Graph boost**       | 0.05   | Boosts memories linked to entity nodes matching the query         |
+| **Keyword boost**     | 0.2    | Ratio of query terms matched in memory content                    |
 | **Instance affinity** | 0.1    | +0.1 for memories from the same embodiment                        |
 
-Default `minScore` is 0.25 — results below this are excluded.
+### Keyword Retrieval Phase
+
+After vector search, a keyword scan promotes memories missed by embedding
+similarity. Only activates when the query has ≥3 terms (after stop-word
+filtering) and at least 3 terms are _distinctive_ (appearing in <50% of all
+memories). A memory is promoted if ≥2 distinctive terms match and ≥50% of
+distinctive terms match. Promoted memories get a small vector floor (0.15) so
+they score below vector results but still appear in context. Up to 2
+keyword-promoted memories are appended as supplementary results.
+
+Default `minScore` is 0.2. Returns up to 12 results (10 vector + 2 keyword).
 
 ### Date-Enriched Embeddings
 

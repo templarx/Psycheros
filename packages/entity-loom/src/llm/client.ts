@@ -55,6 +55,13 @@ function buildCachingHeaders(_baseUrl: string): Record<string, string> {
     headers["anthropic-beta"] = "prompt-caching-2024-07-31";
   }
 
+  // OpenRouter requires HTTP-Referer or X-Title to identify the calling app.
+  // Without it, requests return "Missing Authentication header".
+  if (url.includes("openrouter.ai")) {
+    headers["HTTP-Referer"] = "https://github.com/anthropics/psycheros";
+    headers["X-Title"] = "Psycheros";
+  }
+
   return headers;
 }
 
@@ -110,6 +117,17 @@ export class LLMClient {
   }
 
   /**
+   * Detect whether the current model supports the `temperature` parameter.
+   * OpenAI o-series models reject it; DeepSeek reasoner ignores it.
+   */
+  private modelSupportsTemperature(): boolean {
+    const lower = this.config.model.toLowerCase();
+    if (/^o[134]/.test(lower)) return false;
+    if (/deepseek-r/.test(lower)) return false;
+    return true;
+  }
+
+  /**
    * Send a chat completion request and return the full text response.
    * Implements exponential backoff retry on rate limits and timeouts.
    */
@@ -140,7 +158,13 @@ export class LLMClient {
         };
 
         if (options?.temperature !== undefined) {
-          body.temperature = options.temperature;
+          if (this.modelSupportsTemperature()) {
+            body.temperature = options.temperature;
+          } else {
+            console.warn(
+              `[LLM] Model "${this.config.model}" does not support temperature — stripped from request`,
+            );
+          }
         }
         if (options?.maxTokens !== undefined) {
           this.applyMaxTokens(body, options.maxTokens);
@@ -207,7 +231,13 @@ export class LLMClient {
     };
 
     if (options?.temperature !== undefined) {
-      body.temperature = options.temperature;
+      if (this.modelSupportsTemperature()) {
+        body.temperature = options.temperature;
+      } else {
+        console.warn(
+          `[LLM] Model "${this.config.model}" does not support temperature — stripped from request`,
+        );
+      }
     }
     if (options?.maxTokens !== undefined) {
       this.applyMaxTokens(body, options.maxTokens);

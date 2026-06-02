@@ -6,6 +6,13 @@ All notable changes to entity-loom are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-01
+
+### Fixed
+
+- Temperature parameter now stripped for OpenAI o-series and DeepSeek reasoner
+  models to prevent API rejections.
+
 ## [0.3.3] - 2026-05-22
 
 ### Fixed
@@ -86,6 +93,7 @@ All notable changes to entity-loom are documented here. The format follows
   - **Kindroid / KinLog** — JSON
 - Five-stage wizard served at `http://localhost:3210`.
 
+[0.3.4]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.4
 [0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.3
 [0.3.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.2
 [0.3.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.1

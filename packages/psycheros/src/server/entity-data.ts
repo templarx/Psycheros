@@ -960,34 +960,54 @@ export async function importEntityData(
       };
     }
 
-    // --- Post-import: restart MCP, then sync pull + clear stale RAG tables ---
-    // Entity-core's import handler replaces graph.db on disk, which leaves
-    // the entity-core process with stale DB handles. Restart MCP so entity-core
-    // gets a fresh process with a consistent state.
-    if (details.entity_core?.success && ctx.mcpClient) {
+    // --- Post-import: sync pull to update local identity files ---
+    // The entity_import handler already closes/reopens DB connections, so the
+    // entity-core process is in a consistent state. Try a pull first (no restart).
+    // Only restart as a fallback if the pull fails.
+    if (details.entity_core?.success && ctx.mcpClient?.isConnected()) {
+      let pullSucceeded = false;
+
       await progress({
-        phase: "restart",
-        status: "Restarting entity-core for clean state...",
+        phase: "sync",
+        status: "Syncing identity data...",
       });
-      await yieldLoop();
-      console.log("[entity-data] Restarting MCP for clean post-import state…");
+      console.log("[entity-data] Running post-import sync pull…");
       try {
-        await ctx.mcpClient.restart();
+        await ctx.mcpClient.pull();
+        pullSucceeded = true;
+        details.sync_pull = true;
       } catch (error) {
-        console.error("[entity-data] MCP restart failed:", error);
+        console.error("[entity-data] Post-import pull failed:", error);
       }
 
-      if (ctx.mcpClient.isConnected()) {
+      // Pull failed — restart MCP and retry
+      if (!pullSucceeded && ctx.mcpClient) {
         await progress({
-          phase: "sync",
-          status: "Syncing identity data...",
+          phase: "restart",
+          status: "Restarting entity-core before retrying sync...",
         });
-        console.log("[entity-data] Running post-import sync pull…");
+        await yieldLoop();
+        console.log(
+          "[entity-data] Pull failed, restarting MCP for clean state…",
+        );
         try {
-          await ctx.mcpClient.pull();
-          details.sync_pull = true;
-        } catch {
-          details.sync_pull = false;
+          await ctx.mcpClient.restart();
+        } catch (error) {
+          console.error("[entity-data] MCP restart failed:", error);
+        }
+
+        if (ctx.mcpClient.isConnected()) {
+          await progress({
+            phase: "sync",
+            status: "Syncing identity data (retry)...",
+          });
+          console.log("[entity-data] Retrying sync pull after restart…");
+          try {
+            await ctx.mcpClient.pull();
+            details.sync_pull = true;
+          } catch {
+            details.sync_pull = false;
+          }
         }
       }
     }

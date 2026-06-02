@@ -6,6 +6,16 @@ All notable changes to entity-core are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-01
+
+### Fixed
+
+- Memory RAG retrieval improved with keyword-based boosting alongside vector
+  search, reducing missed relevant memories on short queries.
+- Embedding cache database operations now run inside transactions with busy
+  timeout, preventing partial writes under concurrent access.
+- MCP transport now connects before embedding rebuild on startup.
+
 ## [0.3.2] - 2026-05-28
 
 ### Fixed
@@ -203,6 +213,7 @@ All notable changes to entity-core are documented here. The format follows
 - Knowledge graph (people, places, relationships) backed by SQLite + sqlite-vec.
 - Snapshot system: pre-destructive-operation snapshots for recovery.
 
+[0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.3.3
 [0.3.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.3.2
 [0.3.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.3.1
 [0.3.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-core-v0.3.0

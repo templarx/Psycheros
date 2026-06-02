@@ -128,6 +128,7 @@ export class EmbeddingCache {
     this.dbPath = join(dataDir, "graph.db");
     this.db = new Database(this.dbPath);
     this.db.exec("PRAGMA foreign_keys = ON");
+    this.db.exec("PRAGMA busy_timeout = 5000");
   }
 
   /**
@@ -272,53 +273,55 @@ export class EmbeddingCache {
   ): void {
     if (!this.initialized) return;
 
-    const now = new Date().toISOString();
+    this.transaction(() => {
+      const now = new Date().toISOString();
 
-    // Upsert metadata row
-    this.db.exec(
-      `INSERT INTO memory_embeddings (memory_key, parent_key, memory_id, granularity, date, content_hash, chunk_index, total_chunks, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(memory_key) DO UPDATE SET
-         parent_key = excluded.parent_key,
-         content_hash = excluded.content_hash,
-         chunk_index = excluded.chunk_index,
-         total_chunks = excluded.total_chunks,
-         updated_at = excluded.updated_at`,
-      [
-        memoryKey,
-        parentKey,
-        memoryId,
-        granularity,
-        date,
-        contentHash,
-        chunkIndex,
-        totalChunks,
-        now,
-        now,
-      ],
-    );
-
-    // Get the rowid for this memory_key
-    const rowidStmt = this.db.prepare(
-      "SELECT id FROM memory_embeddings WHERE memory_key = ?",
-    );
-    const row = rowidStmt.get<{ id: number }>(memoryKey);
-    rowidStmt.finalize();
-
-    if (!row) return;
-
-    if (this.vectorAvailable) {
-      const serialized = serializeVector(embedding);
-
-      // Delete existing embedding, then insert new one
-      this.db.exec("DELETE FROM vec_memory_embeddings WHERE rowid = ?", [
-        row.id,
-      ]);
+      // Upsert metadata row
       this.db.exec(
-        "INSERT INTO vec_memory_embeddings(rowid, embedding) VALUES (?, ?)",
-        [row.id, serialized],
+        `INSERT INTO memory_embeddings (memory_key, parent_key, memory_id, granularity, date, content_hash, chunk_index, total_chunks, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(memory_key) DO UPDATE SET
+           parent_key = excluded.parent_key,
+           content_hash = excluded.content_hash,
+           chunk_index = excluded.chunk_index,
+           total_chunks = excluded.total_chunks,
+           updated_at = excluded.updated_at`,
+        [
+          memoryKey,
+          parentKey,
+          memoryId,
+          granularity,
+          date,
+          contentHash,
+          chunkIndex,
+          totalChunks,
+          now,
+          now,
+        ],
       );
-    }
+
+      // Get the rowid for this memory_key
+      const rowidStmt = this.db.prepare(
+        "SELECT id FROM memory_embeddings WHERE memory_key = ?",
+      );
+      const row = rowidStmt.get<{ id: number }>(memoryKey);
+      rowidStmt.finalize();
+
+      if (!row) return;
+
+      if (this.vectorAvailable) {
+        const serialized = serializeVector(embedding);
+
+        // Delete existing embedding, then insert new one
+        this.db.exec("DELETE FROM vec_memory_embeddings WHERE rowid = ?", [
+          row.id,
+        ]);
+        this.db.exec(
+          "INSERT INTO vec_memory_embeddings(rowid, embedding) VALUES (?, ?)",
+          [row.id, serialized],
+        );
+      }
+    });
   }
 
   /**
@@ -327,24 +330,26 @@ export class EmbeddingCache {
   delete(parentKey: string): void {
     if (!this.initialized) return;
 
-    // Get all rowids for this parent
-    const rowidStmt = this.db.prepare(
-      "SELECT id FROM memory_embeddings WHERE parent_key = ?",
-    );
-    const rows = rowidStmt.all<{ id: number }>(parentKey);
-    rowidStmt.finalize();
+    this.transaction(() => {
+      // Get all rowids for this parent
+      const rowidStmt = this.db.prepare(
+        "SELECT id FROM memory_embeddings WHERE parent_key = ?",
+      );
+      const rows = rowidStmt.all<{ id: number }>(parentKey);
+      rowidStmt.finalize();
 
-    if (rows.length > 0) {
-      for (const row of rows) {
-        this.db.exec("DELETE FROM vec_memory_embeddings WHERE rowid = ?", [
-          row.id,
-        ]);
+      if (rows.length > 0) {
+        for (const row of rows) {
+          this.db.exec("DELETE FROM vec_memory_embeddings WHERE rowid = ?", [
+            row.id,
+          ]);
+        }
       }
-    }
 
-    this.db.exec("DELETE FROM memory_embeddings WHERE parent_key = ?", [
-      parentKey,
-    ]);
+      this.db.exec("DELETE FROM memory_embeddings WHERE parent_key = ?", [
+        parentKey,
+      ]);
+    });
   }
 
   /**
@@ -506,16 +511,21 @@ export class EmbeddingCache {
 
   /**
    * Clear all cached embeddings (metadata and vectors).
+   *
+   * Uses DROP + CREATE for the vec table because sqlite-vec virtual
+   * tables don't reliably support bulk DELETE — stale rows persist
+   * across rebuild cycles, orphaning metadata from their vectors.
    */
   clearAll(): void {
     if (!this.initialized) return;
 
-    // Delete all vector entries first (need rowids from metadata)
+    // Drop and recreate the vec table for a clean slate
     if (this.vectorAvailable) {
       try {
-        this.db.exec("DELETE FROM vec_memory_embeddings");
+        this.db.exec("DROP TABLE IF EXISTS vec_memory_embeddings");
+        this.db.exec(VECTOR_TABLE_SQL);
       } catch {
-        // Table might not exist or be empty
+        // Vector extension might be unavailable — metadata clear still proceeds
       }
     }
 
@@ -616,10 +626,24 @@ export class EmbeddingCache {
     }
     this.db = new Database(this.dbPath);
     this.db.exec("PRAGMA foreign_keys = ON");
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.initialized = false;
   }
 
   // ---- Private helpers ----
+
+  /** Run a function inside a database transaction. Rolls back on error. */
+  private transaction<T>(fn: () => T): T {
+    this.db.exec("BEGIN");
+    try {
+      const result = fn();
+      this.db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
 
   private loadVectorExtension(): void {
     const moduleDir = dirname(fromFileUrl(import.meta.url));

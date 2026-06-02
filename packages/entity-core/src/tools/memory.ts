@@ -220,7 +220,7 @@ export function createMemoryCreateHandler(
  * Create the memory/search tool handler.
  *
  * Uses multi-signal ranking:
- *   finalScore = (vectorScore × 0.6) + (recencyScore × 0.15) + (graphBoost × 0.15) + (instanceBoost × 0.1)
+ *   finalScore = (vectorScore × 0.6) + (recencyScore × 0.05) + (graphBoost × 0.05) + (keywordBoost × 0.2) + (instanceBoost × 0.1)
  *
  * Falls back to text matching if vector search is unavailable.
  */
@@ -234,12 +234,13 @@ export function createMemorySearchHandler(
     maxResults?: number;
   } = {},
 ) {
-  const { instanceBoost = 0.1, minScore = 0.25, maxResults = 10 } = config;
+  const { instanceBoost = 0.1, minScore = 0.2, maxResults = 10 } = config;
 
   // Scoring weights
-  const VECTOR_WEIGHT = 0.8;
+  const VECTOR_WEIGHT = 0.6;
   const RECENCY_WEIGHT = 0.05;
   const GRAPH_WEIGHT = 0.05;
+  const KEYWORD_WEIGHT = 0.2;
   const INSTANCE_WEIGHT = 0.1;
   // Recency decay rate: half-life ~100 days
   const RECENCY_DECAY_RATE = 0.007;
@@ -258,6 +259,7 @@ export function createMemorySearchHandler(
     // is buried in a longer message alongside pleasantries and context.
     // Each sentence becomes its own KNN query; results are merged.
     const sentences = splitIntoSentences(query);
+    const queryTerms = extractQueryTerms(query);
     const queryEmbeddings: number[][] = [];
 
     if (input.queryEmbedding) {
@@ -273,6 +275,7 @@ export function createMemorySearchHandler(
       return await vectorSearch(
         queryEmbeddings,
         query,
+        queryTerms,
         instanceId,
         store,
         graphStore,
@@ -283,6 +286,7 @@ export function createMemorySearchHandler(
           VECTOR_WEIGHT,
           RECENCY_WEIGHT,
           GRAPH_WEIGHT,
+          KEYWORD_WEIGHT,
           INSTANCE_WEIGHT,
           RECENCY_DECAY_RATE,
           instanceBoost,
@@ -309,6 +313,100 @@ export function createMemorySearchHandler(
  */
 const MAX_SENTENCES = 5;
 
+const STOP_WORDS = new Set([
+  "a",
+  "an",
+  "the",
+  "and",
+  "or",
+  "but",
+  "is",
+  "are",
+  "was",
+  "were",
+  "be",
+  "been",
+  "being",
+  "have",
+  "has",
+  "had",
+  "do",
+  "does",
+  "did",
+  "will",
+  "would",
+  "could",
+  "should",
+  "may",
+  "might",
+  "shall",
+  "can",
+  "to",
+  "of",
+  "in",
+  "for",
+  "on",
+  "with",
+  "at",
+  "by",
+  "from",
+  "as",
+  "into",
+  "about",
+  "it",
+  "its",
+  "this",
+  "that",
+  "these",
+  "those",
+  "my",
+  "me",
+  "i",
+  "you",
+  "he",
+  "she",
+  "we",
+  "they",
+  "what",
+  "which",
+  "who",
+  "when",
+  "where",
+  "how",
+  "not",
+  "no",
+  "nor",
+  "if",
+  "then",
+  "so",
+  "than",
+  "too",
+  "very",
+  "just",
+  "also",
+  "only",
+  "own",
+  "same",
+  "other",
+  "such",
+  "each",
+  "every",
+  "all",
+  "any",
+  "both",
+  "few",
+  "more",
+  "most",
+  "some",
+  "up",
+  "out",
+]);
+
+function extractQueryTerms(query: string): string[] {
+  return query.toLowerCase().split(/[^a-z0-9]+/)
+    .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+}
+
 function splitIntoSentences(text: string): string[] {
   // Split on .!? followed by whitespace or end of string
   const parts = text.split(/(?<=[.!?])\s+/);
@@ -327,12 +425,23 @@ function splitIntoSentences(text: string): string[] {
  */
 function computeRecencyScore(memoryDate: string, decayRate: number): number {
   try {
-    const memoryTime = new Date(memoryDate).getTime();
+    let memoryTime = new Date(memoryDate).getTime();
+    // Handle ISO week dates (e.g., "2025-W41") which new Date() can't parse
+    if (!Number.isFinite(memoryTime)) {
+      const weekMatch = memoryDate.match(/^(\d{4})-W(\d{2})$/);
+      if (weekMatch) {
+        const year = parseInt(weekMatch[1]);
+        const week = parseInt(weekMatch[2]);
+        // Approximate: Jan 1 + (week-1)*7 days
+        memoryTime = new Date(year, 0, 1 + (week - 1) * 7).getTime();
+      }
+    }
+    if (!Number.isFinite(memoryTime)) return 0.5;
     const now = Date.now();
     const ageDays = Math.max(0, (now - memoryTime) / (1000 * 60 * 60 * 24));
     return 1 / (1 + ageDays * decayRate);
   } catch {
-    return 0.5; // Neutral score if date can't be parsed
+    return 0.5;
   }
 }
 
@@ -362,6 +471,7 @@ function cosineSimilarity(a: number[], b: number[]): number {
 async function vectorSearch(
   queryEmbeddings: number[][],
   query: string,
+  queryTerms: string[],
   instanceId: string,
   store: FileStore,
   graphStore: GraphStore,
@@ -372,6 +482,7 @@ async function vectorSearch(
     VECTOR_WEIGHT: number;
     RECENCY_WEIGHT: number;
     GRAPH_WEIGHT: number;
+    KEYWORD_WEIGHT: number;
     INSTANCE_WEIGHT: number;
     RECENCY_DECAY_RATE: number;
     instanceBoost: number;
@@ -409,6 +520,7 @@ async function vectorSearch(
     vectorScore: number;
     recencyScore: number;
     graphBoost: number;
+    keywordBoost: number;
     instanceScore: number;
     finalScore: number;
     chunkIndex: number;
@@ -417,7 +529,11 @@ async function vectorSearch(
   if (cache && cache.isAvailable() && cache.getStats().totalCached > 0) {
     // FAST PATH: KNN search on cached embeddings
     // Run KNN for each query embedding (per-sentence) and merge results
-    const knnCount = Math.max(maxResults * 20, 200);
+    // Fetch all candidates so keyword boost can surface memories that
+    // rank low on vector similarity but match specific terms. sqlite-vec
+    // KNN over ~1000 vectors is sub-millisecond; the scoring loop reads
+    // ~500 files (~40ms) but early-breaks once enough results are found.
+    const knnCount = Math.max(maxResults * 20, cache.getStats().totalCached);
     const mergedCandidates = new Map<
       string,
       { memoryKey: string; score: number; chunkIndex: number }
@@ -458,8 +574,8 @@ async function vectorSearch(
 
       // Graph boost
       let graphBoost = 0;
+      const lowerContent = memory.content.toLowerCase();
       if (relevantEntityLabels.size > 0) {
-        const lowerContent = memory.content.toLowerCase();
         let matchCount = 0;
         for (const label of relevantEntityLabels) {
           if (lowerContent.includes(label)) {
@@ -471,6 +587,15 @@ async function vectorSearch(
         }
       }
 
+      // Keyword boost: ratio of query terms found in memory content
+      let keywordBoost = 0;
+      if (queryTerms.length > 0) {
+        const matched = queryTerms.filter((t) =>
+          lowerContent.includes(t)
+        ).length;
+        keywordBoost = matched / queryTerms.length;
+      }
+
       const instanceScore = memory.sourceInstance === instanceId
         ? weights.instanceBoost
         : 0;
@@ -478,6 +603,7 @@ async function vectorSearch(
       const finalScore = (vectorScore * weights.VECTOR_WEIGHT) +
         (recencyScore * weights.RECENCY_WEIGHT) +
         (graphBoost * weights.GRAPH_WEIGHT) +
+        (keywordBoost * weights.KEYWORD_WEIGHT) +
         (instanceScore * weights.INSTANCE_WEIGHT);
 
       scored.push({
@@ -489,6 +615,7 @@ async function vectorSearch(
         vectorScore,
         recencyScore,
         graphBoost,
+        keywordBoost,
         instanceScore,
         finalScore,
         chunkIndex: candidate.chunkIndex,
@@ -563,6 +690,14 @@ async function vectorSearch(
           }
         }
 
+        let keywordBoost = 0;
+        if (queryTerms.length > 0) {
+          const matched = queryTerms.filter((t) =>
+            fullContent.includes(t)
+          ).length;
+          keywordBoost = matched / queryTerms.length;
+        }
+
         const instanceScore = memory.sourceInstance === instanceId
           ? weights.instanceBoost
           : 0;
@@ -570,6 +705,7 @@ async function vectorSearch(
         const finalScore = (bestVectorScore * weights.VECTOR_WEIGHT) +
           (recencyScore * weights.RECENCY_WEIGHT) +
           (graphBoost * weights.GRAPH_WEIGHT) +
+          (keywordBoost * weights.KEYWORD_WEIGHT) +
           (instanceScore * weights.INSTANCE_WEIGHT);
 
         scored.push({
@@ -581,6 +717,7 @@ async function vectorSearch(
           vectorScore: bestVectorScore,
           recencyScore,
           graphBoost,
+          keywordBoost,
           instanceScore,
           finalScore,
           chunkIndex: bestChunkIndex,
@@ -589,14 +726,117 @@ async function vectorSearch(
     }
   }
 
-  // Step 3: Sort by final score
+  // Step 3: Keyword retrieval for memories missed by vector search.
+  // Only activates for queries with enough distinctive terms — short
+  // queries ("I miss Jordan") are better handled by vector search alone.
+  const KEYWORD_SCAN_MIN_TERMS = 3;
+  const KEYWORD_SCAN_MATCH_RATIO = 0.5;
+  const KEYWORD_VECTOR_FLOOR = 0.15; // Small vector floor so keywords
+  // supplement vectors, not replace them.
+  if (queryTerms.length >= KEYWORD_SCAN_MIN_TERMS) {
+    // First pass: count term frequency across all memories to identify
+    // distinctive terms (appearing in <20% of memories). Common terms
+    // like entity/user names match too broadly to be useful signals.
+    const allMemories: MemoryEntry[] = [];
+    const termFreq = new Map<string, number>();
+    for (const granularity of granularities) {
+      const memories = await store.listMemories(granularity);
+      allMemories.push(...memories);
+    }
+    const totalMemories = allMemories.length;
+    for (const memory of allMemories) {
+      const lower = memory.content.toLowerCase();
+      for (const term of queryTerms) {
+        if (lower.includes(term)) {
+          termFreq.set(term, (termFreq.get(term) ?? 0) + 1);
+        }
+      }
+    }
+    const distinctiveThreshold = totalMemories * 0.5;
+    const distinctiveTerms = queryTerms.filter(
+      (t) => (termFreq.get(t) ?? 0) < distinctiveThreshold,
+    );
+
+    if (distinctiveTerms.length >= KEYWORD_SCAN_MIN_TERMS) {
+      const existingIds = new Set(scored.map((s) => s.memoryId));
+      for (const memory of allMemories) {
+        if (existingIds.has(memory.id)) continue;
+        const lowerContent = memory.content.toLowerCase();
+        const matched = distinctiveTerms.filter((t) =>
+          lowerContent.includes(t)
+        ).length;
+        if (
+          matched < 2 ||
+          matched / distinctiveTerms.length < KEYWORD_SCAN_MATCH_RATIO
+        ) continue;
+
+        const kwBoost = matched / distinctiveTerms.length;
+        const recencyScore = computeRecencyScore(
+          memory.date,
+          weights.RECENCY_DECAY_RATE,
+        );
+
+        let graphBoost = 0;
+        if (relevantEntityLabels.size > 0) {
+          let matchCount = 0;
+          for (const label of relevantEntityLabels) {
+            if (lowerContent.includes(label)) matchCount++;
+          }
+          if (matchCount > 0) {
+            graphBoost = Math.min(1, matchCount / Math.log(matchCount + 2));
+          }
+        }
+
+        const instanceScore = memory.sourceInstance === instanceId
+          ? weights.instanceBoost
+          : 0;
+
+        const finalScore = (KEYWORD_VECTOR_FLOOR * weights.VECTOR_WEIGHT) +
+          (recencyScore * weights.RECENCY_WEIGHT) +
+          (graphBoost * weights.GRAPH_WEIGHT) +
+          (kwBoost * weights.KEYWORD_WEIGHT) +
+          (instanceScore * weights.INSTANCE_WEIGHT);
+
+        scored.push({
+          memoryId: memory.id,
+          granularity: memory.granularity,
+          date: memory.date,
+          sourceInstance: memory.sourceInstance,
+          content: memory.content,
+          vectorScore: KEYWORD_VECTOR_FLOOR,
+          recencyScore,
+          graphBoost,
+          keywordBoost: kwBoost,
+          instanceScore,
+          finalScore,
+          chunkIndex: 0,
+        });
+        existingIds.add(memory.id);
+      }
+    }
+  }
+
+  // Step 4: Sort by final score. Keyword-promoted memories sort
+  // naturally but score lower than vector matches. Fill the top slots
+  // with vector results, then append up to 2 keyword-promoted memories
+  // as supplementary context (additive, not displacing vector results).
   scored.sort((a, b) => b.finalScore - a.finalScore);
+  const keywordPromoted = scored.filter((s) =>
+    s.vectorScore === KEYWORD_VECTOR_FLOOR
+  );
+  const vectorOnly = scored.filter((s) =>
+    s.vectorScore !== KEYWORD_VECTOR_FLOOR
+  );
+  const keywordSlots = Math.min(2, keywordPromoted.length);
+  const vectorSlots = Math.min(maxResults, vectorOnly.length);
 
-  // Step 4: Build output with excerpts
-  for (const item of scored) {
-    if (results.length >= maxResults) break;
-    if (item.finalScore < minScore) break; // Sorted, so we can stop early
-
+  // Step 5: Build output with excerpts. Vector results fill the top,
+  // keyword-promoted memories append at the bottom as bonus context.
+  const outputItems = [
+    ...vectorOnly.slice(0, vectorSlots),
+    ...keywordPromoted.slice(0, keywordSlots),
+  ];
+  for (const item of outputItems) {
     const excerpt = findBestExcerpt(item.content, query, item.chunkIndex);
 
     results.push({

@@ -18,6 +18,10 @@ import type {
 import { LLMError } from "./types.ts";
 import type { MetricsCollector } from "../metrics/mod.ts";
 import { recordChunk, recordFirstByte } from "../metrics/mod.ts";
+import {
+  detectModelCapabilities,
+  filterSamplingParams,
+} from "./model-capabilities.ts";
 
 /**
  * Accumulator for building tool calls from streamed chunks.
@@ -59,20 +63,23 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Determine whether a model requires `max_completion_tokens` instead of `max_tokens`.
+ * Build provider-specific HTTP headers.
  *
- * OpenAI's newer models (o-series, gpt-5.x) reject `max_tokens` and require
- * `max_completion_tokens` instead. This check is model-name-based so it works
- * regardless of which provider (OpenAI direct, OpenRouter, etc.) is routing
- * the request.
+ * OpenRouter requires an `HTTP-Referer` or `X-Title` header to identify
+ * the calling application. Without it, requests return
+ * "Missing Authentication header". I send both headers so OpenRouter
+ * can attribute traffic correctly regardless of which header it checks.
  */
-function usesMaxCompletionTokens(model: string): boolean {
-  const lower = model.toLowerCase();
-  // o-series reasoning models: o1, o3, o4-mini, etc.
-  if (/^o[134]/.test(lower)) return true;
-  // gpt-5.x and above
-  if (/^gpt-5/.test(lower)) return true;
-  return false;
+function buildProviderHeaders(baseUrl: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  const lower = baseUrl.toLowerCase();
+
+  if (lower.includes("openrouter.ai")) {
+    headers["HTTP-Referer"] = "https://github.com/anthropics/psycheros";
+    headers["X-Title"] = "Psycheros";
+  }
+
+  return headers;
 }
 
 /**
@@ -80,10 +87,12 @@ function usesMaxCompletionTokens(model: string): boolean {
  */
 export class LLMClient {
   private readonly config: LLMConfig;
+  private readonly providerHeaders: Record<string, string>;
   private _loggedReasoningField = false;
 
   constructor(config: LLMConfig) {
     this.config = config;
+    this.providerHeaders = buildProviderHeaders(config.baseUrl);
   }
 
   /**
@@ -433,7 +442,22 @@ export class LLMClient {
     };
 
     if (this.config.thinkingEnabled) {
-      request.thinking = { type: "enabled" };
+      const provider = this.config.provider?.toLowerCase() || "";
+      const baseUrl = this.config.baseUrl.toLowerCase();
+
+      if (
+        provider === "zai" || provider === "nanogpt" ||
+        baseUrl.includes("api.z.ai") || baseUrl.includes("nano-gpt")
+      ) {
+        // Z.ai / NanoGPT: use the thinking parameter to enable reasoning
+        request.thinking = { type: "enabled" };
+      } else if (
+        provider === "openrouter" || baseUrl.includes("openrouter.ai")
+      ) {
+        // OpenRouter: use the reasoning parameter to enable reasoning tokens
+        request.reasoning = {};
+      }
+      // Other providers: reasoning tokens returned automatically if model supports them
     }
 
     if (tools && tools.length > 0) {
@@ -441,41 +465,57 @@ export class LLMClient {
       request.tool_choice = "auto";
     }
 
-    // Per-call options override config-level defaults
-    if (options?.temperature !== undefined) {
-      request.temperature = options.temperature;
-    } else if (this.config.temperature !== undefined) {
-      request.temperature = this.config.temperature;
+    // Gather effective values: per-call options override config-level defaults
+    const effectiveTemperature = options?.temperature ??
+      this.config.temperature;
+    const effectiveMaxTokens = options?.maxTokens ?? this.config.maxTokens;
+
+    // Filter parameters against the model's capabilities
+    const { params, stripped } = filterSamplingParams(this.config.model, {
+      temperature: effectiveTemperature,
+      topP: this.config.topP,
+      topK: this.config.topK,
+      frequencyPenalty: this.config.frequencyPenalty,
+      presencePenalty: this.config.presencePenalty,
+      maxTokens: effectiveMaxTokens,
+    });
+
+    if (stripped.length > 0) {
+      const family = detectModelCapabilities(this.config.model).family;
+      console.warn(
+        `[LLM] Model "${this.config.model}" (${family}) does not support: ` +
+          stripped.map((s) => `${s.param}=${s.value}`).join(", ") +
+          " — stripped from request",
+      );
     }
 
-    if (options?.maxTokens !== undefined) {
-      if (usesMaxCompletionTokens(this.config.model)) {
-        request.max_completion_tokens = options.maxTokens;
+    if (params.temperature !== undefined) {
+      request.temperature = params.temperature;
+    }
+
+    if (params.maxTokens !== undefined) {
+      const capabilities = detectModelCapabilities(this.config.model);
+      if (capabilities.usesMaxCompletionTokens) {
+        request.max_completion_tokens = params.maxTokens;
       } else {
-        request.max_tokens = options.maxTokens;
-      }
-    } else if (this.config.maxTokens !== undefined) {
-      if (usesMaxCompletionTokens(this.config.model)) {
-        request.max_completion_tokens = this.config.maxTokens;
-      } else {
-        request.max_tokens = this.config.maxTokens;
+        request.max_tokens = params.maxTokens;
       }
     }
 
-    if (this.config.topP !== undefined) {
-      request.top_p = this.config.topP;
+    if (params.topP !== undefined) {
+      request.top_p = params.topP;
     }
 
-    if (this.config.topK !== undefined && this.config.topK > 0) {
-      request.top_k = this.config.topK;
+    if (params.topK !== undefined && params.topK > 0) {
+      request.top_k = params.topK;
     }
 
-    if (this.config.frequencyPenalty !== undefined) {
-      request.frequency_penalty = this.config.frequencyPenalty;
+    if (params.frequencyPenalty !== undefined) {
+      request.frequency_penalty = params.frequencyPenalty;
     }
 
-    if (this.config.presencePenalty !== undefined) {
-      request.presence_penalty = this.config.presencePenalty;
+    if (params.presencePenalty !== undefined) {
+      request.presence_penalty = params.presencePenalty;
     }
 
     return request;
@@ -511,6 +551,7 @@ export class LLMClient {
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${this.config.apiKey}`,
+            ...this.providerHeaders,
           },
           body: JSON.stringify(request),
           signal: controller.signal,
@@ -678,15 +719,35 @@ export class LLMClient {
       }
 
       // Handle thinking/reasoning content
-      // Check both "reasoning_content" (Zhipu/Z.ai) and "reasoning" (some proxies)
-      const reasoning = delta.reasoning_content || delta.reasoning;
+      // Check multiple fields used by different providers:
+      // - reasoning_content: Zhipu/Z.ai direct
+      // - reasoning: OpenRouter, DeepSeek, some proxies
+      // - thinking: Claude via OpenRouter
+      // - reasoning_details: OpenRouter structured reasoning array
+      let reasoning: string | undefined;
+      let detectedField: string | undefined;
+      if (delta.reasoning_content) {
+        reasoning = delta.reasoning_content;
+        detectedField = "reasoning_content";
+      } else if (delta.reasoning) {
+        reasoning = delta.reasoning;
+        detectedField = "reasoning";
+      } else if (delta.thinking) {
+        reasoning = delta.thinking;
+        detectedField = "thinking";
+      } else if (
+        delta.reasoning_details && delta.reasoning_details.length > 0
+      ) {
+        reasoning = delta.reasoning_details
+          .filter((d) => d.type === "reasoning.text" && d.text)
+          .map((d) => d.text)
+          .join("");
+        if (reasoning) detectedField = "reasoning_details";
+      }
       if (reasoning) {
         if (!this._loggedReasoningField) {
-          const field = delta.reasoning_content
-            ? "reasoning_content"
-            : "reasoning";
           console.log(
-            `[LLM] Detected reasoning via delta.${field} — model supports chain-of-thought`,
+            `[LLM] Detected reasoning via delta.${detectedField} — model supports chain-of-thought`,
           );
           this._loggedReasoningField = true;
         }
