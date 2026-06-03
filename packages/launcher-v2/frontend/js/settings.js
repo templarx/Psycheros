@@ -126,18 +126,16 @@ function renderSettings(settings, diag, channel, tahoeCompat) {
           label: "Tahoe VM nonsense workaround",
           value: tahoeCompat ? "Enabled — JITless mode" : "Disabled",
           plainValue: true,
-          action: installed
-            ? {
-              label: tahoeCompat ? "Disable" : "Enable",
-              async onClick() {
-                const { err } = await safeInvoke("set_tahoe_compat", {
-                  enabled: !tahoeCompat,
-                });
-                if (err) console.warn("[launcher] set_tahoe_compat:", err);
-                await loadSettings();
-              },
-            }
-            : undefined,
+          action: {
+            label: tahoeCompat ? "Disable" : "Enable",
+            async onClick() {
+              const { err } = await safeInvoke("set_tahoe_compat", {
+                enabled: !tahoeCompat,
+              });
+              if (err) console.warn("[launcher] set_tahoe_compat:", err);
+              await loadSettings();
+            },
+          },
         },
       ],
     },

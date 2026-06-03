@@ -7,6 +7,15 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-06-03
+
+### Fixed
+
+- **Tahoe VM workaround toggle now visible regardless of daemon state.** The
+  toggle in Settings > Compatibility was hidden when the daemon wasn't running —
+  it now always shows so you can enable/disable the JITless workaround before
+  launching.
+
 ## [0.2.10] - 2026-06-03
 
 ### Added
