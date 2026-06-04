@@ -160,6 +160,12 @@ impl LaunchdSupervisor {
             PlistMode::Manual => "<key>RunAtLoad</key>\n    <false/>",
         };
 
+        let v8_flags_arg = if cfg.tahoe_compat {
+            "        <string>--v8-flags=--jitless</string>\n"
+        } else {
+            ""
+        };
+
         format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -172,6 +178,7 @@ impl LaunchdSupervisor {
         <string>{deno}</string>
         <string>run</string>
         <string>-A</string>
+{v8_flags_arg}
         <string>src/main.ts</string>
     </array>
     <key>WorkingDirectory</key>
@@ -194,6 +201,7 @@ impl LaunchdSupervisor {
             stdout = escape_xml(&stdout.display().to_string()),
             stderr = escape_xml(&stderr.display().to_string()),
             mode_keys = mode_keys,
+            v8_flags_arg = v8_flags_arg,
             env_block = env_block,
         )
     }
@@ -710,7 +718,11 @@ mod tests {
         let xml = sup.render_plist(&fixture_cfg(), PlistMode::Autostart);
         assert!(
             !xml.contains("DENO_V8_FLAGS"),
-            "DENO_V8_FLAGS should not appear when tahoe_compat is false"
+            "DENO_V8_FLAGS env var should not appear when tahoe_compat is false"
+        );
+        assert!(
+            !xml.contains("--v8-flags=--jitless"),
+            "--v8-flags=--jitless argument should not appear when tahoe_compat is false"
         );
     }
 
@@ -722,7 +734,11 @@ mod tests {
         let xml = sup.render_plist(&cfg, PlistMode::Autostart);
         assert!(
             xml.contains("<key>DENO_V8_FLAGS</key>\n        <string>--jitless</string>"),
-            "DENO_V8_FLAGS=--jitless should appear when tahoe_compat is true"
+            "DENO_V8_FLAGS=--jitless env var should appear when tahoe_compat is true"
+        );
+        assert!(
+            xml.contains("<string>--v8-flags=--jitless</string>"),
+            "--v8-flags=--jitless should appear as a ProgramArgument when tahoe_compat is true"
         );
     }
 

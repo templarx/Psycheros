@@ -7,6 +7,16 @@ cross-platform supervisors ship.
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-06-03
+
+### Fixed
+
+- **Tahoe VM workaround now passes `--v8-flags=--jitless` as a ProgramArgument
+  in the launchd plist**, not just as an environment variable. The previous
+  implementation only set `DENO_V8_FLAGS=--jitless` in the plist's
+  EnvironmentVariables block, but Deno needs the flag as a direct CLI argument
+  to actually disable JIT.
+
 ## [0.2.11] - 2026-06-03
 
 ### Fixed
@@ -21,11 +31,13 @@ cross-platform supervisors ship.
 ### Added
 
 - **Tahoe VM nonsense workaround toggle** in Settings > Compatibility. When
-  enabled, injects `DENO_V8_FLAGS=--jitless` into the launchd plist's
-  environment block and restarts the daemon, bypassing a macOS Tahoe 26.3.x
-  virtual memory regression that crashes V8's JIT CodeRange reservation.
-  Persists across restarts. ~20-40% slower JS execution; negligible for an
-  I/O-bound chat daemon.
+  enabled, injects `--v8-flags=--jitless` as both a ProgramArgument and an
+  environment variable (`DENO_V8_FLAGS=--jitless`) in the launchd plist, then
+  restarts the daemon. Bypasses a macOS Tahoe 26.3.x virtual memory regression
+  that crashes V8's JIT CodeRange reservation. Toggle is visible regardless of
+  daemon install state so users can enable it before their first install
+  attempt. Persists across restarts. ~20-40% slower JS execution; negligible for
+  an I/O-bound chat daemon.
 
 ## [0.2.9] - 2026-06-03
 
