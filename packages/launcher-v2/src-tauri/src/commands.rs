@@ -645,6 +645,13 @@ fn run_first_run_blocking(app: AppHandle) -> Result<(), String> {
         .map_err(|e| format!("warm deno cache: {e}"))?;
     }
 
+    // Phase 3.5: re-sign native plugins for macOS Tahoe compatibility.
+    // Tahoe enforces Team ID matching on dlopen(); the official Deno binary
+    // and prebuilt native plugins carry different Team IDs. Ad-hoc re-signing
+    // both (done for Deno in stage_bundled_binary, for plugins here) aligns
+    // them.
+    bundle::repair_plug_cache_signatures();
+
     // Record completion. `bundled_source_version` is the tag name we
     // cloned (e.g. `psycheros-v0.3.3`). Update detection compares the
     // stored tag against `query_latest_tag` to decide whether to offer

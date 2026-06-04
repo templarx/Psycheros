@@ -164,6 +164,8 @@ pub fn stage_bundled_binary(sidecar_path: &Path, dest: &Path) -> Result<(), Bund
         std::fs::set_permissions(dest, perms)?;
     }
 
+    adhoc_resign(dest);
+
     Ok(())
 }
 
@@ -264,6 +266,60 @@ pub fn warm_deno_cache(
         });
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// macOS Tahoe code-signature repair
+// ---------------------------------------------------------------------------
+
+/// Ad-hoc re-sign a binary to remove its original Team ID.
+///
+/// macOS Tahoe (26.3.x) enforces Team ID matching for `dlopen()`: the official
+/// Deno binary is signed with one Team ID and prebuilt native plugins (e.g.
+/// `@db/sqlite` via `@denosaurs/plug`) are signed with another. Re-signing both
+/// ad-hoc (no Team ID) aligns them so `dlopen()` succeeds.
+///
+/// Silently no-ops on non-macOS and when `codesign` is absent.
+fn adhoc_resign(path: &Path) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("codesign")
+            .args(["-f", "-s", "-"])
+            .arg(path)
+            .status();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = path;
+}
+
+/// Walk the Deno native-plugin cache (`$DENO_DIR/plug/`) and ad-hoc re-sign
+/// every `.dylib` found. Called after `warm_deno_cache` so Tahoe users
+/// don't need to touch Terminal.
+///
+/// Silently no-ops when the plug directory doesn't exist or on non-macOS.
+pub fn repair_plug_cache_signatures() {
+    #[cfg(target_os = "macos")]
+    {
+        let plug_dir = dirs::cache_dir()
+            .map(|d| d.join("deno").join("plug"))
+            .filter(|d| d.is_dir());
+
+        let Some(plug_dir) = plug_dir else {
+            return;
+        };
+
+        let entries = match std::fs::read_dir(&plug_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().map_or(false, |ext| ext == "dylib") {
+                adhoc_resign(&path);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
