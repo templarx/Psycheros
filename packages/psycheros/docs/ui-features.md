@@ -646,9 +646,10 @@ settings (passed through from the Psycheros environment).
 Settings → System Admin → Entity Data tab. Organized into three sections:
 
 - **Export Entity Data** — full backup as a downloadable zip
-- **Psycheros Instance Transfer** — restore/transfer from another Psycheros instance
-- **entity-loom Data Migration** — import data from external platforms
-  (ChatGPT, SillyTavern, etc.) processed through entity-loom
+- **Psycheros Instance Transfer** — restore/transfer from another Psycheros
+  instance
+- **entity-loom Data Migration** — import data from external platforms (ChatGPT,
+  SillyTavern, etc.) processed through entity-loom
 
 **Export** produces a zip containing:
 

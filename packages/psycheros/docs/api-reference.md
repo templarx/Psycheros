@@ -13,17 +13,16 @@ response. The explicit Stop button (double-tap) still aborts and prevents
 persistence.
 
 **Persist-before-yield:** Tool results are persisted to the database and added
-to the in-memory messages array *before* being yielded as SSE events. This
+to the in-memory messages array _before_ being yielded as SSE events. This
 ensures that if the SSE connection drops mid-stream (browser timeout, network
-blip), the generator's `.return()` cancellation cannot skip the DB insert,
-which would leave an orphaned tool call with no result and cause the LLM to
-re-issue the same tool call on every subsequent turn.
+blip), the generator's `.return()` cancellation cannot skip the DB insert, which
+would leave an orphaned tool call with no result and cause the LLM to re-issue
+the same tool call on every subsequent turn.
 
-**Orphan repair:** At the start of each turn, the entity loop scans
-conversation history for assistant messages with `tool_calls` that have no
-matching `tool` role result message. Any orphans receive a synthetic error
-result, preventing infinite re-issue loops from pre-fix conversations or
-unexpected crashes.
+**Orphan repair:** At the start of each turn, the entity loop scans conversation
+history for assistant messages with `tool_calls` that have no matching `tool`
+role result message. Any orphans receive a synthetic error result, preventing
+infinite re-issue loops from pre-fix conversations or unexpected crashes.
 
 Event flow:
 `message_id (user) → context → thinking → content → tool_call → tool_result → image_generated → metrics → done → message_id (assistant)`
@@ -585,7 +584,7 @@ The custom tools upload endpoint accepts a `multipart/form-data` request with a
 | `POST` | `/api/admin/entity-data/export`                   | Export all entity data as zip. Filename includes the entity name (e.g. `my-entity-export-2026-06-01T12-34-56.zip`). Returns zip on success, or JSON `{ partial: true, error, message }` if entity-core is unavailable                                |
 | `POST` | `/api/admin/entity-data/export?partial=1`         | Export Psycheros-only data (skips entity-core collection)                                                                                                                                                                                            |
 | `POST` | `/api/admin/entity-data/import`                   | Import entity data from uploaded zip (body = raw zip bytes). Streaming NDJSON response with phases: `validate` → `conversations` → `lorebooks` → `vault` → `images` → `anchors` → `entity-core` → `sync` → `restart` (fallback) → `cleanup` → `done` |
-| `POST` | `/api/admin/entity-data/restore-conversations`    | Additive merge of conversations from a Psycheros `conversations.json` file (multipart form: `file`, `embed`). Streaming NDJSON response with phases: `db` → `embed` → `done`                                                                        |
+| `POST` | `/api/admin/entity-data/restore-conversations`    | Additive merge of conversations from a Psycheros `conversations.json` file (multipart form: `file`, `embed`). Streaming NDJSON response with phases: `db` → `embed` → `done`                                                                         |
 | `POST` | `/api/admin/data-migration/graph`                 | Import knowledge graph from entity-loom `.db` file (multipart form: `file`, `embed`). Streaming NDJSON response with phases: `restart` → `db` → `embed` → `done`                                                                                     |
 
 ### Pulse

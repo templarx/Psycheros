@@ -99,7 +99,9 @@ export class WearableConnectionManager {
 
     socket.onerror = (ev) => {
       console.error(
-        `[Wearable] Client ${clientId} socket error: ${ev instanceof ErrorEvent ? ev.message : String(ev)}`,
+        `[Wearable] Client ${clientId} socket error: ${
+          ev instanceof ErrorEvent ? ev.message : String(ev)
+        }`,
       );
       this.removeClient(clientId);
     };

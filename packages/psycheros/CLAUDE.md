@@ -74,9 +74,9 @@ Each rule has a single condition (stream ID + operator: `changes_to`,
 `PulseEngine.triggerPulse(rule.action.pulseId, "data_event")` on match.
 Sustained tracking (`condition.sustainedMinutes`) requires the condition to hold
 continuously before firing; cooldown prevents re-triggering within
-`cooldownMinutes`. Types and persistence live in `event-rules.ts`. Config persists across device
-disconnects — all registered devices are always visible and editable regardless
-of connection state.
+`cooldownMinutes`. Types and persistence live in `event-rules.ts`. Config
+persists across device disconnects — all registered devices are always visible
+and editable regardless of connection state.
 
 **Production vs localhost routes:** The wearable endpoints are registered under
 two path sets. `/api/device/stream` and `/api/device/data` are for localhost/dev

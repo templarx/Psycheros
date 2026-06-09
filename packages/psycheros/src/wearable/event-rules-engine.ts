@@ -11,10 +11,7 @@ import type {
   EventRuleCondition,
   EventRuleState,
 } from "./event-rules.ts";
-import {
-  getDefaultRuleState,
-  loadEventRules,
-} from "./event-rules.ts";
+import { getDefaultRuleState, loadEventRules } from "./event-rules.ts";
 import type { PulseEngine } from "../pulse/engine.ts";
 
 export class EventRulesEngine {
@@ -66,8 +63,10 @@ export class EventRulesEngine {
       if (!ruleState) continue;
 
       // Check cooldown
-      if (ruleState.lastFired > 0 &&
-        Date.now() - ruleState.lastFired < rule.cooldownMinutes * 60000) {
+      if (
+        ruleState.lastFired > 0 &&
+        Date.now() - ruleState.lastFired < rule.cooldownMinutes * 60000
+      ) {
         continue;
       }
 
@@ -75,7 +74,9 @@ export class EventRulesEngine {
       if (this.evaluateCondition(rule.condition, value, ruleState)) {
         ruleState.lastFired = Date.now();
         ruleState.conditionTrueSince = null;
-        console.log(`[EventRules] Rule "${rule.name}" fired for device ${deviceId}`);
+        console.log(
+          `[EventRules] Rule "${rule.name}" fired for device ${deviceId}`,
+        );
         try {
           this.pulseEngine.triggerPulse(rule.action.pulseId, "data_event");
         } catch (error) {
