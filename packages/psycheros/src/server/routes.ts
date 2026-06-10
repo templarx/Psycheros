@@ -185,7 +185,7 @@ export interface RouteContext {
   projectRoot: string;
   /**
    * Data root — where user-mutable runtime state lives (.psycheros/,
-   * identity/, .snapshots/, memories/, custom-tools/, backgrounds/).
+   * identity/, .snapshots/, memories/).
    * Equal to projectRoot when PSYCHEROS_DATA_DIR is unset.
    */
   dataRoot: string;
@@ -7662,7 +7662,7 @@ export async function handleUploadCustomTool(
       );
     }
 
-    const customDir = `${ctx.dataRoot}/custom-tools`;
+    const customDir = `${ctx.dataRoot}/.psycheros/custom-tools`;
     try {
       await Deno.mkdir(customDir, { recursive: true });
     } catch {
@@ -7706,7 +7706,7 @@ export async function handleDeleteCustomTool(
 
   // Resolve tool name to actual filename by scanning the custom-tools directory.
   // The filename may differ from the exported tool name, so check each file's exports.
-  const customDir = `${ctx.dataRoot}/custom-tools`;
+  const customDir = `${ctx.dataRoot}/.psycheros/custom-tools`;
   let targetFile: string | null = null;
 
   try {

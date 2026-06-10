@@ -323,7 +323,7 @@ export interface ServerConfig {
   projectRoot: string;
   /**
    * Data root — where user-mutable runtime state lives (.psycheros/,
-   * identity/, .snapshots/, memories/, custom-tools/, backgrounds/).
+   * identity/, .snapshots/, memories/).
    * Set via PSYCHEROS_DATA_DIR env. Defaults to projectRoot for
    * backward compatibility with `deno task start` deployments.
    */
@@ -1634,6 +1634,7 @@ export class Server {
       customTools: this.customTools,
       updateCustomTools: (tools) => {
         this.customTools = tools;
+        this.reloadToolRegistry();
       },
     };
   }

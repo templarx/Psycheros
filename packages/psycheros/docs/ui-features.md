@@ -394,12 +394,13 @@ user makes changes via the UI.
 
 **Custom Tools:**
 
-- Place `.js` files in the `custom-tools/` directory at the project root, or use
-  the **Import Tool** button on the Custom tab to upload from the UI
+- Place `.js` files in the `.psycheros/custom-tools/` directory inside the data
+  root, or use the **Import Tool** button on the Custom tab to upload from the
+  UI
 - Each file exports a default `Tool` object with `definition` and `execute`
   properties
-- Imported files are saved to `custom-tools/` and the registry hot-reloads — no
-  server restart needed
+- Imported files are saved to `.psycheros/custom-tools/` and the registry
+  hot-reloads — no server restart needed
 - Toggle them on to enable — no core code changes needed
 
 **API Endpoints:**

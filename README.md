@@ -123,8 +123,8 @@ a foreign platform into an importable package.
   Buttplug or Lovense.
 - **Pulse.** Autonomous scheduled prompts — cron, inactivity, webhook, or
   filesystem triggers. The entity can act on its own time.
-- **Custom tools.** Drop a `.js` or `.ts` file in `custom-tools/` and the entity
-  can use it. No core changes needed.
+- **Custom tools.** Drop a `.js` file in `.psycheros/custom-tools/` and the
+  entity can use it. No core changes needed.
 
 For the full picture, see
 [`packages/psycheros/docs/`](packages/psycheros/docs/).

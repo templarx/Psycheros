@@ -347,11 +347,11 @@ fails or is not configured, falls back to
 
 ### Tools Settings
 
-| Method | Path                       | Description                                                                                                                        |
-| ------ | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/api/tools-settings`      | Get all tools metadata, categories, current overrides, and custom tool names                                                       |
-| `POST` | `/api/tools-settings`      | Save tool overrides and hot-reload registry (`{ "toolOverrides": { "shell": true, ... } }`)                                        |
-| `POST` | `/api/custom-tools/upload` | Upload a custom tool `.js` file (multipart/form-data, field `tool`, max 100KB); writes to `custom-tools/` and hot-reloads registry |
+| Method | Path                       | Description                                                                                                                                   |
+| ------ | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/api/tools-settings`      | Get all tools metadata, categories, current overrides, and custom tool names                                                                  |
+| `POST` | `/api/tools-settings`      | Save tool overrides and hot-reload registry (`{ "toolOverrides": { "shell": true, ... } }`)                                                   |
+| `POST` | `/api/custom-tools/upload` | Upload a custom tool `.js` file (multipart/form-data, field `tool`, max 100KB); writes to `.psycheros/custom-tools/` and hot-reloads registry |
 
 Settings stored in `.psycheros/tools-settings.json`. Shape:
 `{ "toolOverrides": Record<string, boolean> }`. When this file exists, overrides
@@ -359,8 +359,8 @@ take precedence over `PSYCHEROS_TOOLS` env var.
 
 The custom tools upload endpoint accepts a `multipart/form-data` request with a
 `tool` field containing the `.js` file. On success, the file is written to
-`custom-tools/<filename>` and the custom tool registry is reloaded. Returns
-`{ "success": true, "toolName": "..." }` or
+`custom-tools/<filename>` inside `.psycheros/` and the custom tool registry is
+reloaded. Returns `{ "success": true, "toolName": "..." }` or
 `{ "success": false, "error": "..." }`.
 
 ### MCP

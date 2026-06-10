@@ -56,12 +56,10 @@ The launcher writes everything under the OS-conventional app-data dir:
 ├── bin/
 │   └── deno             Bundled Deno copied to stable path (plist references this)
 ├── data/                The daemon's `PSYCHEROS_DATA_DIR` target
-│   ├── .psycheros/      DB, settings, vault docs, generated images
+│   ├── .psycheros/      DB, settings, vault docs, generated images, custom tools
 │   ├── identity/        Entity identity files
 │   ├── .snapshots/      Versioned identity snapshots
 │   ├── memories/        Daily/weekly memory summaries
-│   ├── custom-tools/    User-imported tool JS files
-│   ├── backgrounds/     UI background images
 │   └── entity-core/
 │       └── data/        Entity-core's own data dir
 └── logs/                Daemon stdout/stderr (launchd / Task Scheduler)

@@ -165,7 +165,8 @@ autonomous Pulse calls it almost always means step 7 is missing.
 
 Custom tools don't need any of the registry wiring above.
 
-1. Create `custom-tools/my-tool.js` exporting a default `Tool` object.
+1. Create `.psycheros/custom-tools/my-tool.js` exporting a default `Tool`
+   object.
 2. Or use the **Import Tool** button on Settings > Tools > Custom.
 3. Toggle it on.
 
@@ -216,10 +217,9 @@ The data tree (rooted at `dataRoot`):
   User-specific entity data. Never `git add` files from them.
 - `.psycheros/` — DB (`psycheros.db`), settings JSON files, vault documents
   (`.psycheros/vault/documents/`), generated images, chat attachments,
-  background images, anchor images.
+  background images, anchor images, custom tool JS files
+  (`.psycheros/custom-tools/`).
 - `memories/` — daily/weekly/monthly/yearly memory summaries.
-- `custom-tools/` — user-imported tool JS files.
-- `backgrounds/` — UI background images.
 
 Docker users currently bind-mount `.psycheros/` only; setting
 `PSYCHEROS_DATA_DIR=/data` and bind-mounting `/data` is the cleaner way to

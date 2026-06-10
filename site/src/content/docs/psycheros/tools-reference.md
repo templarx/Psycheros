@@ -39,10 +39,10 @@ search provider is configured).
 
 ### Adding a Custom Tool
 
-Custom tools live in the `custom-tools/` directory at the project root. No core
-code changes are needed.
+Custom tools live in the `.psycheros/custom-tools/` directory inside the data
+root. No core code changes are needed.
 
-1. Create `custom-tools/my-tool.js` exporting a default `Tool` object
+1. Create `.psycheros/custom-tools/my-tool.js` exporting a default `Tool` object
 2. The file must export
    `{ definition: { type: "function", function: { name, description, parameters } }, execute: async (args, ctx) => { ... } }`
 3. `ctx` provides: `toolCallId`, `conversationId`, `db` (database client),
@@ -85,8 +85,8 @@ managing tool enable/disable state.
 - `POST /api/tools-settings` — save overrides and hot-reload
   (`{ "toolOverrides": { "shell": true, ... } }`)
 - `POST /api/custom-tools/upload` — upload a `.js` custom tool file
-  (multipart/form-data, field `tool`, max 100KB); writes to `custom-tools/`,
-  hot-reloads registry
+  (multipart/form-data, field `tool`, max 100KB); writes to
+  `.psycheros/custom-tools/`, hot-reloads registry
 - `GET /fragments/settings/tools` — render Tools settings UI fragment
 
 **Related Source Files:**
@@ -95,7 +95,7 @@ managing tool enable/disable state.
 | ----------------------------- | ---------------------------------------------------------------------------------- |
 | `src/tools/registry.ts`       | `AVAILABLE_TOOLS` catalog and `ToolRegistry` class                                 |
 | `src/tools/tools-settings.ts` | `ToolsSettings` type, categories, load/save, enable resolution                     |
-| `src/tools/custom-loader.ts`  | Dynamic loader for `custom-tools/` directory                                       |
+| `src/tools/custom-loader.ts`  | Dynamic loader for `.psycheros/custom-tools/` directory                            |
 | `src/server/templates.ts`     | `renderToolsSettings()` and helper functions                                       |
 | `src/server/routes.ts`        | `handleGetToolsSettings`, `handleSaveToolsSettings`, `handleToolsSettingsFragment` |
 

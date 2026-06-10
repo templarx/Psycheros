@@ -159,14 +159,15 @@ export async function initializeFromTemplates(
 }
 
 /**
- * Seed the custom-tools/ directory with template files if it doesn't exist.
+ * Seed the `.psycheros/custom-tools/` directory with template files if it
+ * doesn't exist.
  */
 async function initializeCustomToolsDir(
   projectRoot: string,
   dataRoot: string,
 ): Promise<void> {
   const templateDir = join(projectRoot, "templates", "custom-tools");
-  const targetDir = join(dataRoot, "custom-tools");
+  const targetDir = join(dataRoot, ".psycheros", "custom-tools");
 
   try {
     const entries = Array.from(Deno.readDirSync(templateDir));
@@ -175,7 +176,7 @@ async function initializeCustomToolsDir(
     const result = await copyTemplateFiles(templateDir, targetDir);
     if (result.copied > 0) {
       console.log(
-        `[Init] Seeded custom-tools/ with ${result.copied} template file(s)`,
+        `[Init] Seeded .psycheros/custom-tools/ with ${result.copied} template file(s)`,
       );
     }
   } catch {

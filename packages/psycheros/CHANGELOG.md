@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-06-10
+
+### Fixed
+
+- Custom tools are now stored under `.psycheros/custom-tools/` instead of a
+  top-level `custom-tools/` directory. The old location was not covered by
+  Docker volume mounts, so custom tools were lost on container rebuilds. On
+  startup, any files in the legacy `custom-tools/` directory are automatically
+  migrated to the new location.
+- Tool registry is now reloaded after uploading or deleting a custom tool, so
+  new tools appear immediately without a server restart.
+
 ## [0.7.0] - 2026-06-09
 
 ### Added
@@ -618,6 +630,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.7.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.7.1
 [0.7.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.7.0
 [0.6.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.6.2
 [0.6.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.6.1
