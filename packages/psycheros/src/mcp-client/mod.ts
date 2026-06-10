@@ -1357,12 +1357,14 @@ export class MCPClient {
   async readMemory(
     granularity: Granularity,
     date: string,
+    slug?: string,
   ): Promise<MemoryEntry | null> {
     if (this.client) {
       try {
         const result = await this.callToolWithTimeout("memory_read", {
           granularity,
           date,
+          ...(slug ? { slug } : {}),
         });
 
         const r = result as Record<string, unknown>;
@@ -1480,6 +1482,48 @@ export class MCPClient {
       return [];
     } catch (error) {
       console.error("[MCP] Memory search failed:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Grep memories via MCP (plain-text keyword search).
+   */
+  async grepMemories(
+    query: string,
+    options?: {
+      maxResults?: number;
+    },
+  ): Promise<
+    Array<{
+      granularity: string;
+      date: string;
+      slug?: string;
+      title: string;
+      score: number;
+      context: string;
+    }>
+  > {
+    if (!this.client) {
+      console.log("[MCP] Not connected, cannot grep memories");
+      return [];
+    }
+
+    try {
+      const result = await this.callToolWithTimeout("memory_grep", {
+        query,
+        maxResults: options?.maxResults,
+      });
+
+      const textContent = extractTextContent(result);
+      if (textContent) {
+        const response = JSON.parse(textContent);
+        return response.results ?? [];
+      }
+
+      return [];
+    } catch (error) {
+      console.error("[MCP] Memory grep failed:", error);
       return [];
     }
   }

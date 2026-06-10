@@ -42,6 +42,7 @@ import {
   createMemoryDeleteHandler,
   createMemoryEmbeddingPurgeHandler,
   createMemoryEmbeddingRebuildHandler,
+  createMemoryGrepHandler,
   createMemoryListHandler,
   createMemoryReadHandler,
   createMemorySearchHandler,
@@ -451,6 +452,28 @@ export function createServer(
   );
 
   server.tool(
+    "memory_grep",
+    memoryTools["memory/grep"].description,
+    {
+      query: memoryTools["memory/grep"].inputSchema.shape.query,
+      maxResults: memoryTools["memory/grep"].inputSchema.shape.maxResults,
+    },
+    async ({ query, maxResults }) => {
+      await store.initialize();
+      const handler = createMemoryGrepHandler(store);
+      const result = await handler({ query, maxResults });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify(result, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
     "memory_list",
     memoryTools["memory/list"].description,
     {
@@ -487,11 +510,12 @@ export function createServer(
     {
       granularity: memoryTools["memory/read"].inputSchema.shape.granularity,
       date: memoryTools["memory/read"].inputSchema.shape.date,
+      slug: memoryTools["memory/read"].inputSchema.shape.slug,
     },
-    async ({ granularity, date }) => {
+    async ({ granularity, date, slug }) => {
       await store.initialize();
       const handler = createMemoryReadHandler(store);
-      const result = await handler({ granularity, date });
+      const result = await handler({ granularity, date, slug });
       return {
         content: [
           {

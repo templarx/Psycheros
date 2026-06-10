@@ -6,6 +6,15 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-09
+
+### Added
+
+- `memory_recall` tool with two-phase design: search mode runs semantic and grep
+  matching in parallel to return a compact hit list with titles and previews;
+  read mode fetches specific memories in full. The entity only pulls full
+  content for memories it actually needs.
+
 ## [0.6.2] - 2026-06-09
 
 ### Fixed
@@ -609,6 +618,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.7.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.7.0
 [0.6.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.6.2
 [0.6.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.6.1
 [0.6.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.6.0

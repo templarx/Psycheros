@@ -180,6 +180,39 @@ via a `[System — Pulse "name"]` prefix rather than a user message.
 | File | Purpose |
 | ---- | ------- |
 
+## Memory Tools
+
+The entity can create significant memories and deliberately search for memories
+that the automatic eager RAG pass didn't surface.
+
+### create_significant_memory
+
+Creates a permanent memory for emotionally important events. These memories are
+never consolidated or lost — they sit alongside the daily/weekly/monthly/yearly
+hierarchy. Written to entity-core via MCP.
+
+### memory_recall
+
+Two-phase hybrid recall for deliberately finding memories:
+
+1. **Search mode** (provide `query`): Runs semantic search and keyword grep in
+   parallel against entity-core, merges results into a compact hit list showing
+   titles, dates, match sources, and ~300 char previews.
+2. **Read mode** (provide `granularity` + `date`, optionally `slug`): Reads a
+   specific memory in full.
+
+The entity uses this when someone asks it to try harder to remember something,
+or when it senses it should know something that didn't come up in the automatic
+recall.
+
+### Related Source Files
+
+| File                                     | Purpose                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------ |
+| `src/tools/create-significant-memory.ts` | `create_significant_memory` — permanent memory creation            |
+| `src/tools/memory-recall.ts`             | `memory_recall` — two-phase search + read memory recall            |
+| `src/mcp-client/mod.ts`                  | MCP client methods: `grepMemories`, `searchMemories`, `readMemory` |
+
 ## Identity Tools
 
 The entity can modify its identity files through a unified maintenance tool and

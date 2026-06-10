@@ -228,6 +228,27 @@ Retrieves relevant memories from entity-core's memory store via the
    longer memories get the most relevant section with context (~512 tokens). No
    truncation markers.
 
+### Memory Recall Tool (`memory_recall`)
+
+A deliberate recall tool for when the automatic eager RAG pass doesn't surface
+something the entity should know. The entity uses this when someone explicitly
+asks it to try harder to remember, or when it senses a gap in its recall.
+
+**Two-phase operation:**
+
+1. **Search mode** (`query` parameter): Runs semantic search (`memory_search`)
+   and keyword search (`memory_grep`) in parallel against entity-core, merges
+   and deduplicates the results, and returns a compact hit list. Each result
+   shows the memory title, date, source tags (`semantic:X%`, `keyword:Y%`), a
+   `memory_id` for the read phase, and a ~300 character preview.
+2. **Read mode** (`granularity` + `date`, optionally `slug`): Reads a single
+   memory in full by its identifier from the hit list. The entity only reads the
+   specific memories it needs, keeping context token usage controlled.
+
+The hybrid approach catches both semantically related content (via embeddings)
+and exact keyword matches (via text grep), compensating for limitations in
+either method individually.
+
 **Known limitation**: entity-core embeds each memory file as a single blob
 truncated to 3000 chars. Daily and weekly memories are typically under 3KB, but
 monthly/yearly/significant memories may grow beyond this over time, making

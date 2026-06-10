@@ -98,8 +98,8 @@ export const TOOL_CATEGORIES: ToolCategory[] = [
   {
     id: "memory",
     name: "Memory",
-    description: "Significant memory creation",
-    toolNames: ["create_significant_memory"],
+    description: "Significant memory creation and memory recall",
+    toolNames: ["create_significant_memory", "memory_recall"],
   },
   {
     id: "discord",

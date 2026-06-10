@@ -66,6 +66,7 @@ export const MemoryListSchema = z.object({
 export const MemoryReadSchema = z.object({
   granularity: GranularitySchema,
   date: z.string().regex(/^\d{4}(-W\d{2}|(-\d{2})?(-\d{2})?)$/),
+  slug: z.string().optional(),
 });
 
 /**
@@ -1086,16 +1087,31 @@ export function createMemoryReadHandler(store: FileStore) {
   return async (
     input: z.infer<typeof MemoryReadSchema>,
   ): Promise<MemoryReadOutput> => {
-    const { granularity, date } = input;
+    const { granularity, date, slug } = input;
 
-    // Use findMemoryByDate to search across instance variants
-    // (e.g. daily memories with instance-scoped filenames like 2026-04-15_psycheros.md)
-    const memory = await store.findMemoryByDate(granularity, date);
+    let memory: import("../types.ts").MemoryEntry | null;
+
+    if (slug) {
+      // Read directly by slug — avoids findMemoryByDate ambiguity when
+      // multiple significant memories share the same date.
+      memory = await store.readMemory(
+        granularity as Granularity,
+        date,
+        undefined,
+        slug,
+      );
+    } else {
+      // Use findMemoryByDate to search across instance variants
+      // (e.g. daily memories with instance-scoped filenames like 2026-04-15_psycheros.md)
+      memory = await store.findMemoryByDate(granularity, date);
+    }
 
     if (!memory) {
       return {
         success: false,
-        message: `No memory found for ${granularity}/${date}.`,
+        message: `No memory found for ${granularity}/${date}${
+          slug ? `/${slug}` : ""
+        }.`,
       };
     }
 
@@ -1343,6 +1359,129 @@ export function createMemoryEmbeddingRebuildHandler(
   };
 }
 
+/**
+ * Input schema for memory/grep tool.
+ */
+export const MemoryGrepSchema = z.object({
+  query: z.string().min(1),
+  maxResults: z.number().min(1).max(50).optional(),
+});
+
+/**
+ * Output type for memory/grep tool.
+ */
+export interface MemoryGrepOutput {
+  results: Array<{
+    granularity: string;
+    date: string;
+    slug?: string;
+    title: string;
+    score: number;
+    context: string;
+  }>;
+  totalScanned: number;
+}
+
+/**
+ * Extract a short context window around the first matching query term.
+ */
+function extractGrepContext(
+  content: string,
+  queryTerms: string[],
+  maxLen = 300,
+): string {
+  const lower = content.toLowerCase();
+  let bestPos = -1;
+
+  for (const term of queryTerms) {
+    const idx = lower.indexOf(term);
+    if (idx !== -1) {
+      bestPos = idx;
+      break;
+    }
+  }
+
+  if (bestPos === -1) return content.slice(0, maxLen);
+
+  const halfWindow = Math.max(0, Math.floor((maxLen - 20) / 2));
+  const start = Math.max(0, bestPos - halfWindow);
+  const end = Math.min(content.length, start + maxLen);
+
+  let context = content.slice(start, end);
+  if (start > 0) context = "..." + context;
+  if (end < content.length) context += "...";
+
+  return context;
+}
+
+/**
+ * Create the memory/grep tool handler.
+ *
+ * Plain-text grep search across all my memories. Splits the query into
+ * terms, scores memories by how many query words appear in the content,
+ * and returns a compact hit list with titles and matching context.
+ */
+export function createMemoryGrepHandler(store: FileStore) {
+  return async (
+    input: z.infer<typeof MemoryGrepSchema>,
+  ): Promise<MemoryGrepOutput> => {
+    const { query, maxResults: maxResultsInput } = input;
+    const maxResults = maxResultsInput ?? 20;
+
+    const queryTerms = extractQueryTerms(query);
+    if (queryTerms.length === 0) {
+      return { results: [], totalScanned: 0 };
+    }
+
+    const granularities: Granularity[] = [
+      "daily",
+      "weekly",
+      "monthly",
+      "yearly",
+      "significant",
+    ];
+
+    const results: MemoryGrepOutput["results"] = [];
+    let totalScanned = 0;
+
+    for (const granularity of granularities) {
+      const memories = await store.listMemories(granularity);
+
+      for (const memory of memories) {
+        totalScanned++;
+        const lowerContent = memory.content.toLowerCase();
+
+        const matched = queryTerms.filter((t) =>
+          lowerContent.includes(t)
+        ).length;
+        const score = matched / queryTerms.length;
+
+        if (score < 0.1) continue;
+
+        const titleMatch = memory.content.match(/^#\s+(.+)$/m);
+        const title = titleMatch ? titleMatch[1].trim() : memory.date;
+
+        const context = extractGrepContext(memory.content, queryTerms);
+
+        results.push({
+          granularity,
+          date: memory.date,
+          ...(memory.slug ? { slug: memory.slug } : {}),
+          title,
+          score: Math.round(score * 1000) / 1000,
+          context,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.score - a.score);
+    return {
+      results: results.slice(0, maxResults),
+      totalScanned,
+    };
+  };
+}
+
 export const memoryTools = {
   "memory/create": {
     description:
@@ -1353,6 +1492,11 @@ export const memoryTools = {
     description:
       "Search my memories for relevant content. Uses vector similarity with multi-signal ranking (semantic relevance, recency, graph context, and instance affinity). Falls back to text matching if embeddings are unavailable.",
     inputSchema: MemorySearchSchema,
+  },
+  "memory/grep": {
+    description:
+      "Plain-text keyword search across all my memories. Splits the query into terms and scores memories by how many of those terms appear in the content. Returns a compact hit list with titles and matching context. I use this alongside semantic search when I need to find memories by specific keywords, names, or phrases that the embedding model might miss.",
+    inputSchema: MemoryGrepSchema,
   },
   "memory/list": {
     description:

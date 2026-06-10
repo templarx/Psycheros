@@ -54,6 +54,7 @@ MCP server — what an LLM actually calls — are the underscore forms shown her
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `memory_create`            | Create a new memory entry with instance tagging. For daily memories, merges with existing content if the file already exists — bullets are deduplicated by `[chat:id]` tag so importing from multiple sources (e.g., entity-loom runs at different times) appends new bullets instead of overwriting. Automatically extracts entities and relationships into the knowledge graph in the background (requires `ENTITY_CORE_LLM_API_KEY`). |
 | `memory_search`            | Search my memories using multi-signal ranking (vector similarity, keyword matching, recency, graph context, instance affinity). Falls back to text matching if embeddings are unavailable. Includes a keyword retrieval phase that promotes memories with high term overlap missed by vector similarity.                                                                                                                                 |
+| `memory_grep`              | Plain-text keyword search across all my memories. Splits the query into terms (after stop-word filtering) and scores memories by how many query terms appear in the content. Returns a compact hit list with titles, matching context windows, and slugs for significant memories. Complements `memory_search` — catches exact keyword matches that the embedding model might miss.                                                      |
 | `memory_list`              | List my memories by granularity, with optional pagination and date range filtering                                                                                                                                                                                                                                                                                                                                                       |
 | `memory_read`              | Read a single memory entry by granularity and date. Returns full content and metadata (source instance, version, timestamps).                                                                                                                                                                                                                                                                                                            |
 | `memory_update`            | Overwrite a memory entry (no append merge). Use to correct inaccuracies in recorded memories. Preserves existing metadata (source instance, chat IDs), increments version, sets `updatedAt`. Re-extracts entities to the knowledge graph in the background. Tracks who made the edit via `editedBy`.                                                                                                                                     |
@@ -76,10 +77,11 @@ MCP server — what an LLM actually calls — are the underscore forms shown her
 
 ### memory_read Inputs
 
-| Field         | Type   | Required | Description                                                   |
-| ------------- | ------ | -------- | ------------------------------------------------------------- |
-| `granularity` | enum   | Yes      | One of: `daily`, `weekly`, `monthly`, `yearly`, `significant` |
-| `date`        | string | Yes      | Date string matching `^\d{4}(-W\d{2}                          |
+| Field         | Type   | Required | Description                                                                                                                                   |
+| ------------- | ------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `granularity` | enum   | Yes      | One of: `daily`, `weekly`, `monthly`, `yearly`, `significant`                                                                                 |
+| `date`        | string | Yes      | Date string matching `^\d{4}(-W\d{2}                                                                                                          |
+| `slug`        | string | No       | Slug for significant memories. When provided, reads the specific slug-based file directly instead of searching across all files for the date. |
 
 ### memory_read Output
 
@@ -169,6 +171,25 @@ implement pagination by comparing `offset + limit` against `total`.
 | `results[].granularity`, `.date`, `.excerpt`, `.sourceInstance` | Original fields (backward compatible)                       |
 | `searchMethod`                                                  | Overall method: `"vector"` or `"text"`                      |
 | `vectorAvailable`                                               | Whether vector search was available                         |
+
+### memory_grep Inputs
+
+| Field        | Type   | Required | Description                        |
+| ------------ | ------ | -------- | ---------------------------------- |
+| `query`      | string | Yes      | Search query (split into terms)    |
+| `maxResults` | number | No       | Maximum results (1-50), default 20 |
+
+### memory_grep Output
+
+| Field                   | Description                                 |
+| ----------------------- | ------------------------------------------- |
+| `results[].granularity` | Granularity level                           |
+| `results[].date`        | Memory date string                          |
+| `results[].slug`        | Slug (significant memories only)            |
+| `results[].title`       | Title extracted from first `# heading` line |
+| `results[].score`       | Ratio of matched query terms (0-1)          |
+| `results[].context`     | ~300 char window around first matching term |
+| `totalScanned`          | Total memory files searched                 |
 
 See [sync-and-memory.md](sync-and-memory.md) for the memory hierarchy and
 retrieval ranking details.

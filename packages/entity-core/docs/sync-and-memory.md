@@ -90,6 +90,8 @@ data/memories/
 
 ## Memory Search & Retrieval
 
+### Semantic Search (`memory_search`)
+
 `memory_search` uses per-sentence embedding with multi-signal ranking and a
 keyword retrieval phase:
 
@@ -179,11 +181,35 @@ Results from the same embodiment are boosted, making memories contextually
 relevant to the current interface — a memory created in Psycheros is slightly
 more relevant when searching from Psycheros than from SillyTavern.
 
+### Keyword Search (`memory_grep`)
+
+`memory_grep` is a plain-text keyword search that complements `memory_search`.
+It splits the query into terms (after stop-word filtering), iterates all memory
+files across every granularity, and scores each memory by the ratio of query
+terms found in its content. Results include the title (extracted from the first
+`# heading` line), a ~300 character context window around the first matching
+term, and the slug for significant memories.
+
+Use cases:
+
+- Catching exact keyword matches that the embedding model misses (e.g., specific
+  names, places, technical terms)
+- Finding memories by distinctive words that don't have strong semantic
+  relationships (e.g., "filling", "Portland", "Weasley")
+- Deliberate recall where recency bias in semantic search pushes older results
+  down — `memory_grep` has no recency weighting
+
+Limitations:
+
+- No semantic understanding — "dentist" won't find "filling"
+- Stop words are filtered out, so very generic queries may return no terms
+- Scores are term-overlap ratios, not calibrated relevance
+
 ## Related Source Files
 
 | File                                | Purpose                                                                                    |
 | ----------------------------------- | ------------------------------------------------------------------------------------------ |
-| `src/tools/memory.ts`               | Memory MCP tools (create, read, update, delete, search, list)                              |
+| `src/tools/memory.ts`               | Memory MCP tools (create, read, update, delete, search, grep, list)                        |
 | `src/consolidation/consolidator.ts` | Consolidation logic (daily→weekly→monthly→yearly), catch-up                                |
 | `src/consolidation/periods.ts`      | ISO week helpers, period calculation, date filtering                                       |
 | `src/consolidation/prompts.ts`      | LLM prompt templates for consolidation                                                     |

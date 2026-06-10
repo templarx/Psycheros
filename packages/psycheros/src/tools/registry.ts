@@ -11,6 +11,7 @@ import { shellTool } from "./shell.ts";
 import { updateTitleTool } from "./update_title.ts";
 import { getMetricsTool } from "./get_metrics.ts";
 import { createSignificantMemoryTool } from "./create-significant-memory.ts";
+import { memoryRecallTool } from "./memory-recall.ts";
 import { syncMcpTool } from "./sync-mcp.ts";
 // Identity tools
 import { maintainIdentityTool } from "./identity-maintain.ts";
@@ -61,6 +62,7 @@ export const AVAILABLE_TOOLS: Record<string, Tool> = {
   update_title: updateTitleTool,
   get_metrics: getMetricsTool,
   create_significant_memory: createSignificantMemoryTool,
+  memory_recall: memoryRecallTool,
   sync_mcp: syncMcpTool,
   // Identity tools
   maintain_identity: maintainIdentityTool,
