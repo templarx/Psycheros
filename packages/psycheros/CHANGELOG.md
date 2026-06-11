@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-10
+
+### Fixed
+
+- Pulse-spawned conversations now appear in the sidebar immediately. Previously
+  the sidebar only updated if a tool run during the pulse happened to return
+  `affectedRegions: ["conv-list"]`, making it hit-or-miss.
+- The "Once at a specific time" datetime picker in the Pulse editor is now
+  seeded with a default value when first shown. Desktop browsers (Chrome,
+  Firefox) often fail to open the `datetime-local` picker when the field is
+  empty, making the field appear unresponsive.
+
 ## [0.7.1] - 2026-06-10
 
 ### Fixed
@@ -630,6 +642,7 @@ Migration is idempotent — safe to run on a DB that's already been migrated.
 [0.1.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.2
 [0.1.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.1
 [0.1.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.1.0
+[0.7.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.7.2
 [0.7.1]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.7.1
 [0.7.0]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.7.0
 [0.6.2]: https://github.com/PsycherosAI/Psycheros/releases/tag/psycheros-v0.6.2

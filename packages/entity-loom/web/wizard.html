@@ -2875,8 +2875,10 @@
               res.config.llmBaseUrl || "";
             document.getElementById("setup-model").value =
               res.config.llmModel || "";
-            document.getElementById("setup-apikey").value =
-              res.config.llmApiKey || "";
+            document.getElementById("setup-apikey").value = res.config
+                .hasApiKey
+              ? "••••••••••••••••"
+              : "";
           }
           goToStage(res.currentStage || "convert");
         } catch (e) {

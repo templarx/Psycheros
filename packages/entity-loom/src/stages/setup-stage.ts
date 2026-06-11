@@ -28,6 +28,15 @@ import { getProgressSnapshot, getRunningStage } from "../server/stage-lock.ts";
 
 const OUTPUT_DIR = join(Deno.cwd(), ".loom-exports");
 
+/** Return a public-safe copy of the config — strips llmApiKey. */
+function publicConfig(
+  config: WizardConfig | null,
+): (Omit<WizardConfig, "llmApiKey"> & { hasApiKey: boolean }) | null {
+  if (!config) return null;
+  const { llmApiKey: _, ...rest } = config;
+  return { ...rest, hasApiKey: !!config.llmApiKey };
+}
+
 /** In-memory active wizard state */
 let activePackageDir: string | null = null;
 let activeConfig: WizardConfig | null = null;
@@ -82,7 +91,7 @@ export function buildWizardState(): WizardState {
   const stageStatuses = getStageStatuses();
   return {
     currentStage: activeCheckpoint?.currentStage || "setup",
-    config: activeConfig,
+    config: publicConfig(activeConfig) as WizardState["config"],
     checkpoint: activeCheckpoint,
     hasPackage: activePackageDir !== null,
     packageDir: activePackageDir,
@@ -303,7 +312,7 @@ export function setupRoutes(): Array<
         log("info", `Resumed package: ${body.packageDir}`);
         return json({
           success: true,
-          config: activeConfig,
+          config: publicConfig(result.config),
           currentStage: activeCheckpoint.currentStage,
         });
       },

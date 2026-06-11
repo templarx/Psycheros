@@ -3663,6 +3663,21 @@ function updatePulseTriggerFields(triggerType) {
   for (const [key, el] of Object.entries(fields)) {
     if (el) el.style.display = key === triggerType ? '' : 'none';
   }
+
+  // Desktop browsers often don't open the datetime-local picker when the
+  // value is empty. Seed it with a sensible default so the field is
+  // immediately editable.
+  if (triggerType === 'oneshot') {
+    const runAtInput = document.getElementById('pulse-run-at');
+    if (runAtInput && !runAtInput.value) {
+      const now = new Date();
+      now.setMinutes(now.getMinutes() + 30);
+      now.setSeconds(0, 0);
+      const pad = (n) => String(n).padStart(2, '0');
+      runAtInput.value =
+        `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    }
+  }
 }
 
 /**

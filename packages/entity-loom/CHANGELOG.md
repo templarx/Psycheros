@@ -6,6 +6,15 @@ All notable changes to entity-loom are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-06-10
+
+### Security
+
+- The `POST /api/setup/resume` and `GET /api/status` endpoints no longer include
+  `llmApiKey` in their JSON responses. The key is replaced with a boolean
+  `hasApiKey` field. The frontend shows a masked placeholder on resume instead
+  of the actual key value.
+
 ## [0.3.5] - 2026-06-09
 
 ### Fixed
@@ -100,6 +109,7 @@ All notable changes to entity-loom are documented here. The format follows
   - **Kindroid / KinLog** — JSON
 - Five-stage wizard served at `http://localhost:3210`.
 
+[0.3.6]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.6
 [0.3.5]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.5
 [0.3.4]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.4
 [0.3.3]: https://github.com/PsycherosAI/Psycheros/releases/tag/entity-loom-v0.3.3

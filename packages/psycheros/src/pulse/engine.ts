@@ -44,6 +44,7 @@ import type { EntityConfig } from "../entity/mod.ts";
 import type { ImageGenSettings } from "../llm/image-gen-settings.ts";
 import { EntityTurn } from "../entity/mod.ts";
 import { getBroadcaster } from "../server/broadcaster.ts";
+import { generateUIUpdates } from "../server/ui-updates.ts";
 import { renderMessage } from "../server/templates.ts";
 import type { Message, PulseRow } from "../types.ts";
 
@@ -660,6 +661,14 @@ export class PulseEngine {
     if (!conversationId && pulse.chatMode === "silent") {
       const conv = this.db.createConversation(`[Pulse:silent] ${pulse.name}`);
       conversationId = conv.id;
+    }
+
+    // Refresh the sidebar whenever a pulse creates a new conversation.
+    try {
+      const updates = generateUIUpdates(["conv-list"], this.db);
+      getBroadcaster().broadcastUpdates(updates, null);
+    } catch {
+      // Broadcaster may have no connected clients
     }
 
     console.log(
