@@ -2,7 +2,7 @@
  * Image Generation Tool Implementation
  *
  * I use this tool to generate images through configured providers
- * (OpenRouter, ComfyUI, or native). I choose the appropriate generator
+ * (OpenRouter/Venice, Gemini, ComfyUI, or native). I choose the appropriate generator
  * based on context, and can include anchor images for style/character
  * consistency or user-uploaded images as references.
  */
@@ -79,76 +79,8 @@ export const generateImageTool: Tool = {
 };
 
 // =============================================================================
-// OpenRouter Provider
+// OpenRouter Provider (Venice Wrapper)
 // =============================================================================
-
-/**
- * Extract image data from an OpenRouter chat completions response.
- * The response `content` may be:
- *   - An array of content parts: [{ type: "image_url", image_url: { url: "data:..." } }, ...]
- *   - A string containing a data URI or markdown image
- *   - A string with no image (error)
- */
-function extractImageFromContent(
-  content: unknown,
-): { imageData: string; mediaType: string } {
-  // Handle content as array of parts (standard for image-generating models)
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part?.type === "image_url" && part.image_url?.url) {
-        const url = part.image_url.url;
-        // Base64 data URI
-        const dataMatch = url.match(/^data:(image\/\w+);base64,(.+)$/);
-        if (dataMatch) {
-          return { imageData: dataMatch[2], mediaType: dataMatch[1] };
-        }
-        // Remote URL — download it
-        // (handled after the loop below)
-      }
-      // Also handle inlineData (some providers return this format through OpenRouter)
-      if (part?.inlineData && !part.thought) {
-        return {
-          imageData: (part.inlineData as { data: string }).data,
-          mediaType: (part.inlineData as { mimeType?: string }).mimeType ||
-            "image/png",
-        };
-      }
-    }
-    // If no base64 data URI found, check for remote URLs in image_url parts
-    for (const part of content) {
-      if (part?.type === "image_url" && part.image_url?.url) {
-        const url = String(part.image_url.url);
-        if (url.startsWith("http")) {
-          // Return a marker that the caller should fetch
-          throw new Error(`OpenRouter returned a remote image URL: ${url}`);
-        }
-      }
-    }
-    throw new Error("OpenRouter response content array contained no image");
-  }
-
-  // Handle content as string
-  if (typeof content === "string") {
-    // Check for base64 data URI
-    const base64Match = content.match(
-      /data:image\/(\w+);base64,([A-Za-z0-9+/=]+)/,
-    );
-    if (base64Match) {
-      return {
-        imageData: base64Match[2],
-        mediaType: `image/${base64Match[1]}`,
-      };
-    }
-    // Check for markdown image syntax
-    const urlMatch = content.match(/!\[.*?\]\((https?:\/\/[^\s)]+)\)/);
-    if (urlMatch) {
-      throw new Error(`OpenRouter returned a remote image URL: ${urlMatch[1]}`);
-    }
-    throw new Error("OpenRouter response text did not contain an image");
-  }
-
-  throw new Error("OpenRouter returned no content in the response");
-}
 
 async function generateViaOpenRouter(
   config: ImageGenConfig,
@@ -158,75 +90,65 @@ async function generateViaOpenRouter(
   userImage: { data: string; mediaType: string } | undefined,
   inputImage: { data: string; mediaType: string } | undefined,
 ): Promise<{ imageData: string; mediaType: string }> {
+  // Use openrouter settings from config to maintain frontend compatibility,
+  // but we route this to the Venice API.
   const settings = config.settings.openrouter;
+  
   if (!settings) {
-    throw new Error("OpenRouter settings not configured for this generator");
+    throw new Error("OpenRouter (Venice) settings not configured for this generator");
   }
 
-  const baseUrl = (settings.baseUrl || "https://openrouter.ai/api/v1").trim()
-    .replace(/\/+$/, "");
+  // Override the baseUrl to Venice if the default OpenRouter one is still present
+  let baseUrl = (settings.baseUrl || "https://api.venice.ai/api/v1").trim().replace(/\/+$/, "");
+  if (baseUrl.includes("openrouter.ai")) {
+    baseUrl = "https://api.venice.ai/api/v1";
+  }
+  
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     "Authorization": `Bearer ${sanitizeHeaderValue(settings.apiKey)}`,
   };
 
-  // Build user message content — include reference images inline
-  const messageContent: Array<
-    { type: string; text?: string; image_url?: { url: string } }
-  > = [];
-
-  for (const img of anchorImages) {
-    messageContent.push({
-      type: "image_url",
-      image_url: { url: `data:${img.mediaType};base64,${img.data}` },
-    });
+  // Venice's /image/generate does not utilize an array of vision-messages for anchor references
+  // like OpenRouter did. If these are provided, we log a warning for visibility.
+  if (anchorImages.length > 0 || userImage) {
+    console.warn(
+      "[ImageGen] Venice /image/generate endpoint does not natively support array-based anchor " +
+      "or user reference images. They will be ignored unless the active model explicitly supports them."
+    );
   }
 
-  if (userImage) {
-    messageContent.push({
-      type: "image_url",
-      image_url: {
-        url: `data:${userImage.mediaType};base64,${userImage.data}`,
-      },
-    });
-  }
-
-  if (inputImage) {
-    messageContent.push({
-      type: "image_url",
-      image_url: {
-        url: `data:${inputImage.mediaType};base64,${inputImage.data}`,
-      },
-    });
-  }
-
-  // Build text part — fold in negative prompt if present
-  let textPrompt = prompt;
-  if (negativePrompt) {
-    textPrompt += `\n\nStyle requirements: avoid ${negativePrompt}.`;
-  }
-  messageContent.push({ type: "text", text: textPrompt });
-
-  const params = config.settings.params;
-  const aspectRatio = params.aspect_ratio ||
-    mapToAspectRatio(params.width, params.height);
-  const imageSize = mapToImageSize(params.width);
-
-  const imageConfig: Record<string, string> = {
-    aspect_ratio: aspectRatio,
-  };
-  if (imageSize !== "1K") {
-    imageConfig.image_size = imageSize;
-  }
+  const params = config.settings.params || {};
 
   const body: Record<string, unknown> = {
     model: settings.model,
-    messages: [{ role: "user", content: messageContent }],
-    modalities: ["image", "text"],
-    image_config: imageConfig,
+    prompt: prompt,
+    return_binary: false, // Ensures we receive a JSON response with base64 data
+    hide_watermark: true,
+    safe_mode: false,    
+    // You can also add other hardcoded defaults here:
+    // cfg_scale: 7.5,
+    // steps: 8,
   };
 
-  const response = await fetch(`${baseUrl}/chat/completions`, {
+  if (negativePrompt) {
+    body.negative_prompt = negativePrompt;
+  }
+
+  // Handle Venice sizing options (models accept aspect_ratio or explicit dimensions)
+  if (params.aspect_ratio) {
+    body.aspect_ratio = params.aspect_ratio;
+  } else if (params.width && params.height) {
+    body.width = params.width;
+    body.height = params.height;
+  }
+
+  // If iterating on an input image, Venice utilizes an 'image' parameter
+  if (inputImage) {
+    body.image = `data:${inputImage.mediaType};base64,${inputImage.data}`;
+  }
+
+  const response = await fetch(`${baseUrl}/image/generate`, {
     method: "POST",
     headers,
     body: JSON.stringify(body),
@@ -234,77 +156,35 @@ async function generateViaOpenRouter(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`OpenRouter API error (${response.status}): ${errorText}`);
+    throw new Error(`Venice API error (${response.status}): ${errorText}`);
   }
 
-  const chatData = await response.json() as Record<string, unknown>;
+  const data = await response.json() as Record<string, unknown>;
 
-  const choices = chatData.choices as
-    | Array<Record<string, unknown>>
-    | undefined;
-  const message = choices?.[0]?.message as Record<string, unknown> | undefined;
-
-  // OpenRouter returns images in message.images[] (not message.content)
-  // Format: [{ type: "image_url", image_url: { url: "data:image/png;base64,..." } }]
-  const images = message?.images as Array<Record<string, unknown>> | undefined;
-  if (images && images.length > 0) {
-    const imgUrl = images[0]?.image_url as Record<string, string> | undefined;
-    if (imgUrl?.url) {
-      const url = imgUrl.url;
-      const dataMatch = url.match(/^data:(image\/\w+);base64,(.+)$/);
-      if (dataMatch) {
-        return { imageData: dataMatch[2], mediaType: dataMatch[1] };
-      }
-      if (url.startsWith("http")) {
-        const imgResponse = await fetch(url);
-        if (imgResponse.ok) {
-          const buffer = await imgResponse.arrayBuffer();
-          const base64 = uint8ToBase64(new Uint8Array(buffer));
-          const contentType = imgResponse.headers.get("content-type") ||
-            "image/png";
-          return { imageData: base64, mediaType: contentType };
-        }
-      }
+  // Venice returns base64 strings in the 'images' array
+  const images = data.images as string[] | undefined;
+  
+  if (!images || images.length === 0 || !images[0]) {
+    // Fallback for OpenAI compatible response structures (in case of endpoint drift)
+    const openaiData = data.data as Array<{b64_json?: string}> | undefined;
+    if (openaiData?.[0]?.b64_json) {
+       return { imageData: openaiData[0].b64_json, mediaType: "image/png" };
     }
+    console.error("[ImageGen] Unrecognized Venice payload keys:", Object.keys(data));
+    throw new Error("Venice response did not contain a generated image array");
   }
 
-  // Fallback: check message.content (some models/providers may return it there)
-  const content = message?.content;
-
-  // Log what we received for debugging when image extraction fails
-  console.error(
-    `[ImageGen] OpenRouter: no image in message.images[]. ` +
-      `content type=${typeof content}, hasImages=${
-        !!images && images.length > 0
-      }. ` +
-      `message keys=${message ? Object.keys(message).join(",") : "undefined"}`,
-  );
-  if (typeof content === "string") {
-    console.error(
-      `[ImageGen] OpenRouter content (first 200 chars): ${
-        content.slice(0, 200)
-      }`,
-    );
+  let base64Data = images[0];
+  let mediaType = "image/png"; // Default fallback
+  
+  // Extract clean base64 data if the payload included a data URI prefix
+  const dataMatch = base64Data.match(/^data:(image\/\w+);base64,(.+)$/);
+  if (dataMatch) {
+    mediaType = dataMatch[1];
+    base64Data = dataMatch[2];
   }
 
-  try {
-    return extractImageFromContent(content);
-  } catch (err) {
-    // If the error message contains a remote URL, try to download it
-    const urlMatch = err instanceof Error &&
-      err.message.match(/remote image URL: (https?:\/\/[^\s]+)/);
-    if (urlMatch) {
-      const imgResponse = await fetch(urlMatch[1]);
-      if (imgResponse.ok) {
-        const buffer = await imgResponse.arrayBuffer();
-        const base64 = uint8ToBase64(new Uint8Array(buffer));
-        const contentType = imgResponse.headers.get("content-type") ||
-          "image/png";
-        return { imageData: base64, mediaType: contentType };
-      }
-    }
-    throw err;
-  }
+  return { imageData: base64Data, mediaType };
 }
 
 // =============================================================================
@@ -369,7 +249,8 @@ async function generateViaGemini(
 
   // Build parts — text prompt + reference images
   const parts: Array<
-    { text: string } | { inline_data: { mime_type: string; data: string } }
+    | { text: string }
+    | { inline_data: { mime_type: string; data: string } }
   > = [];
 
   // If there's a negative prompt, fold it into the prompt semantically
@@ -458,12 +339,10 @@ async function generateViaGemini(
   }
 
   // Find the first non-thought image part
-  // Gemini response uses camelCase: inlineData, mimeType
   for (const candidate of data.candidates) {
     if (!candidate.content?.parts) continue;
     for (const part of candidate.content.parts) {
       const isThought = (part.thought as boolean) ?? false;
-      // Try camelCase first (Gemini standard), then snake_case
       const inlineData = (part.inlineData ?? part.inline_data) as {
         mimeType?: string;
         data: string;
@@ -506,7 +385,6 @@ async function execute(
     aspect_ratio?: string;
   };
 
-  // Get image gen settings from config
   const settings = ctx.config.imageGenSettings;
   if (!settings) {
     return {
@@ -517,7 +395,6 @@ async function execute(
     };
   }
 
-  // Find the generator
   const generator = settings.generators.find((g) => g.id === generator_id);
   if (!generator) {
     return {
@@ -541,7 +418,6 @@ async function execute(
 
   const dataRoot = ctx.config.dataRoot;
 
-  // Load anchor images if provided
   const anchorImages: Array<{ data: string; mediaType: string }> = [];
   if (anchor_ids && anchor_ids.length > 0) {
     for (const anchorId of anchor_ids) {
@@ -578,11 +454,9 @@ async function execute(
     }
   }
 
-  // Load user-uploaded image if provided
   let userImage: { data: string; mediaType: string } | undefined;
   if (user_image_path) {
     try {
-      // user_image_path is relative to .psycheros/
       const filePath = join(dataRoot, ".psycheros", user_image_path);
       const fileData = await Deno.readFile(filePath);
       const base64 = uint8ToBase64(fileData);
@@ -599,7 +473,6 @@ async function execute(
     }
   }
 
-  // Load input image for iteration if provided
   let inputImage: { data: string; mediaType: string } | undefined;
   if (input_image_path) {
     try {
@@ -620,7 +493,6 @@ async function execute(
   }
 
   try {
-    // Apply per-call aspect ratio override if provided
     if (aspect_ratio) {
       generator.settings.params.aspect_ratio = aspect_ratio;
     }
@@ -669,7 +541,6 @@ async function execute(
         };
     }
 
-    // Save the generated image to disk
     const ext = getExtensionFromMediaType(result.mediaType);
     const filename = `${crypto.randomUUID()}.${ext}`;
     const generatedDir = join(dataRoot, ".psycheros", "generated-images");
@@ -681,7 +552,6 @@ async function execute(
     );
     await Deno.writeFile(filePath, imageBytes);
 
-    // Auto-caption the generated image if captioning is configured
     let description: string | undefined;
     let shortDescription: string | undefined;
     const captioningSettings = ctx.config.imageGenSettings?.captioning;
@@ -699,9 +569,6 @@ async function execute(
       }
     }
 
-    // Build the IMAGE marker for the entity loop to detect (SSE event +
-    // assistant message persistence). The marker is stripped from the tool result
-    // before it reaches the LLM and before DB persistence.
     const imagePath = `/generated-images/${filename}`;
     const markerData: Record<string, string> = {
       path: imagePath,
@@ -716,9 +583,6 @@ async function execute(
     }
     const marker = JSON.stringify(markerData);
 
-    // Plain text description for the entity to "see" what they generated.
-    // [image_generated] prefix enables fading. [short:] suffix stores the
-    // short description for the fading mechanism (hidden from the LLM).
     let resultText = "[image_generated] Image generated successfully.";
     if (description) resultText += ` ${description}`;
     if (shortDescription) resultText += `[short:${shortDescription}]`;
@@ -742,23 +606,10 @@ async function execute(
 // Helpers (exported for reuse by captioning)
 // =============================================================================
 
-/**
- * Ensure a string is valid for use as an HTTP header value.
- * Strips characters outside the Latin-1 range (code points > 255) that cause
- * "headers of RequestInit is not valid ByteString" Fetch API errors.
- * Also strips control characters that shouldn't appear in header values.
- * This typically catches invisible Unicode characters (zero-width spaces, BOM, etc.)
- * that get accidentally pasted in when copying API keys.
- */
 export function sanitizeHeaderValue(value: string): string {
   return value.replace(/[^\x20-\x7E\x80-\xFF]/g, "");
 }
 
-/**
- * Encode a Uint8Array to base64 without blowing the call stack.
- * btoa(String.fromCharCode(...largeArray)) exceeds max call stack size
- * because spread passes each element as a separate argument.
- */
 export function uint8ToBase64(data: Uint8Array): string {
   let binary = "";
   const chunkSize = 8192;
