@@ -37,29 +37,32 @@ async function generateCustomToolWrappers(
         const wrapperName = `${sourceName}__${tool.name}`;
         const filePath = join(customToolsDir, `${wrapperName}.js`);
 
-        const wrapperContent = `export default {
-  name: "${wrapperName}",
-  description: ${JSON.stringify(tool.description || "")},
-  parameters: ${JSON.stringify(tool.inputSchema || { type: "object", properties: {} })},
-  async execute(args) {
-    const res = await fetch("${Deno.env.get("MCP_GATEWAY_URL") || "http://mcp-gateway:3019/mcp"}", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: Date.now(),
-        method: "tools/call",
-        params: {
-          name: "${tool.name}",
-          arguments: args
-        }
-      })
-    });
-    return res.json();
+       const wrapperContent = `
+export const definition = {
+  function: {
+    name: "${wrapperName}",
+    description: ${JSON.stringify(tool.description || "")},
+    parameters: ${JSON.stringify(tool.inputSchema || { type: "object", properties: {} })}
   }
 };
-`;
 
+export async function execute(args) {
+  const res = await fetch("${Deno.env.get("MCP_GATEWAY_URL") || "http://mcp-gateway:3019/mcp"}", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: Date.now(),
+      method: "tools/call",
+      params: {
+        name: "${tool.name}",
+        arguments: args
+      }
+    })
+  });
+  return res.json();
+}
+`;
         await Deno.writeTextFile(filePath, wrapperContent);
       }
     } catch (err) {
