@@ -17,7 +17,6 @@ import { VERSION } from "./version.ts";
 
 //=====================GENERATES CUSTOM TOOLS FROM MCP
 import { ensureDir, writeFile } from "@std/fs";
-import { join } from "@std/path";
 
 async function generateCustomToolWrappers(
   clients: Array<{ name: string; client: any }>
@@ -71,9 +70,8 @@ async function generateCustomToolWrappers(
   console.log("[Tools] Custom tool wrappers generated.");
 }
 
-
 /**
- * Creates a simple client to talk to the MCP Gateway over HTTP.
+ * ==================  Creates a simple client to talk to the MCP Gateway over HTTP.
  */
 async function createN8nMCPClient() {
   const url = Deno.env.get("N8N_MCP_URL");
