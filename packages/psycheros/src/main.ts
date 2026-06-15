@@ -15,6 +15,63 @@ import { loadEntityCoreLLMSettings } from "./llm/entity-core-settings.ts";
 import { join } from "@std/path";
 import { VERSION } from "./version.ts";
 
+//=====================GENERATES CUSTOM TOOLS FROM MCP
+import { ensureDir, writeFile } from "@std/fs";
+import { join } from "@std/path";
+
+async function generateCustomToolWrappers(
+  clients: Array<{ name: string; client: any }>
+) {
+  const customToolsDir = join(config.dataRoot, ".psycheros", "custom-tools");
+  await ensureDir(customToolsDir);
+
+  console.log("[Tools] Generating custom tool wrappers...");
+
+  for (const { name: sourceName, client } of clients) {
+    if (!client) continue;
+
+    try {
+      const result = await client.request("tools/list");
+      const tools = result.result?.tools || result.tools || [];
+
+      for (const tool of tools) {
+        const wrapperName = `${sourceName}__${tool.name}`;
+        const filePath = join(customToolsDir, `${wrapperName}.js`);
+
+        const wrapperContent = `export default {
+  name: "${wrapperName}",
+  description: ${JSON.stringify(tool.description || "")},
+  parameters: ${JSON.stringify(tool.inputSchema || { type: "object", properties: {} })},
+  async execute(args) {
+    const res = await fetch("${Deno.env.get("MCP_GATEWAY_URL") || "http://mcp-gateway:3019/mcp"}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/call",
+        params: {
+          name: "${tool.name}",
+          arguments: args
+        }
+      })
+    });
+    return res.json();
+  }
+};
+`;
+
+        await writeFile(filePath, wrapperContent);
+      }
+    } catch (err) {
+      console.error(`[Tools] Failed to generate wrappers for ${sourceName}:`, err.message);
+    }
+  }
+
+  console.log("[Tools] Custom tool wrappers generated.");
+}
+
+
 /**
  * Creates a simple client to talk to the MCP Gateway over HTTP.
  */
@@ -276,6 +333,14 @@ if (gatewayClient) {
 if (n8nMCPClient) {
   remoteMCPs.push({ name: "n8n", client: n8nMCPClient });
 }
+// Generate custom tool wrappers from both sources
+const remoteClients = [];
+if (gatewayClient) remoteClients.push({ name: "gateway", client: gatewayClient });
+if (n8nMCPClient) remoteClients.push({ name: "n8n", client: n8nMCPClient });
+
+if (remoteClients.length > 0) {
+  await generateCustomToolWrappers(remoteClients);
+}
 
 //=================================
 
@@ -287,6 +352,7 @@ const server = new Server({
   mcpClient,
   remoteMCPs,
 });
+
 
 await server.init();
 
