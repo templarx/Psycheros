@@ -20,15 +20,26 @@ import { VERSION } from "./version.ts";
  */
 async function createN8nMCPClient() {
   const url = Deno.env.get("N8N_MCP_URL");
+  const token = Deno.env.get("N8N_MCP_TOKEN");
+
   if (!url) return null;
 
   console.log("[MCP] Connecting to n8n MCP...");
 
   const n8nClient = {
     async request(method: string, params?: Record<string, unknown>) {
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      // Add token if available
+      if (token) {
+        headers["Authorization"] = `Bearer ${token}`;
+      }
+
       const response = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({
           jsonrpc: "2.0",
           id: Date.now(),
@@ -54,7 +65,6 @@ async function createN8nMCPClient() {
     return null;
   }
 }
-
 async function createMCPGatewayClient() {
   const url = Deno.env.get("MCP_GATEWAY_URL");
   if (!url) return null;
