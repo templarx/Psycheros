@@ -17,6 +17,7 @@ import { VERSION } from "./version.ts";
 
 //=====================GENERATES CUSTOM TOOLS FROM MCP
 import { ensureDir, writeFile } from "@std/fs";
+
 async function generateCustomToolWrappers(
   clients: Array<{ name: string; client: any }>
 ) {
@@ -28,7 +29,7 @@ async function generateCustomToolWrappers(
   for (const { name: sourceName, client } of clients) {
     if (!client) continue;
 
-    // Determine which URL to call based on the source
+    // Choose correct backend URL
     const targetUrl = sourceName === "n8n"
       ? (Deno.env.get("N8N_MCP_URL") || "http://n8n:5678/mcp-server/http")
       : (Deno.env.get("MCP_GATEWAY_URL") || "http://mcp-gateway:3019/mcp");
@@ -41,31 +42,35 @@ async function generateCustomToolWrappers(
         const wrapperName = `${sourceName}__${tool.name}`;
         const filePath = join(customToolsDir, `${wrapperName}.js`);
 
-        const wrapperContent = `
-export const definition = {
-  function: {
-    name: "${wrapperName}",
-    description: ${JSON.stringify(tool.description || "")},
-    parameters: ${JSON.stringify(tool.inputSchema || { type: "object", properties: {} })}
-  }
+        const wrapperContent = `export default {
+  definition: {
+    type: "function",
+    function: {
+      name: "${wrapperName}",
+      description: ${JSON.stringify(tool.description || "")},
+      parameters: ${JSON.stringify(tool.inputSchema || { type: "object", properties: {} })}
+    },
+  },
+  execute: async (args, ctx) => {
+    const res = await fetch("${targetUrl}", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: Date.now(),
+        method: "tools/call",
+        params: {
+          name: "${tool.name}",
+          arguments: args
+        }
+      })
+    });
+    const data = await res.json();
+    return {
+      content: JSON.stringify(data, null, 2),
+    };
+  },
 };
-
-export async function execute(args) {
-  const res = await fetch("${targetUrl}", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: Date.now(),
-      method: "tools/call",
-      params: {
-        name: "${tool.name}",
-        arguments: args
-      }
-    })
-  });
-  return res.json();
-}
 `;
 
         await Deno.writeTextFile(filePath, wrapperContent);
@@ -77,7 +82,6 @@ export async function execute(args) {
 
   console.log("[Tools] Custom tool wrappers generated.");
 }
-
 /**
  * ==================  Creates a simple client to talk to the MCP Gateway over HTTP.
  */
