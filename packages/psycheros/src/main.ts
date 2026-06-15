@@ -30,7 +30,7 @@ async function createN8nMCPClient() {
     async request(method: string, params?: Record<string, unknown>) {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream", // ← This is usually required by n8n
+        "Accept": "application/json, text/event-stream",
       };
 
       if (token) {
@@ -52,6 +52,20 @@ async function createN8nMCPClient() {
         throw new Error(`n8n MCP request failed: ${response.status}`);
       }
 
+      const contentType = response.headers.get("content-type") || "";
+
+      // Handle Server-Sent Events (SSE) response from n8n
+      if (contentType.includes("text/event-stream")) {
+        const text = await response.text();
+        // Extract JSON from SSE format
+        const match = text.match(/data: ({.*})/);
+        if (match) {
+          return JSON.parse(match[1]);
+        }
+        throw new Error("Failed to parse SSE response from n8n");
+      }
+
+      // Normal JSON response
       return response.json();
     },
   };
