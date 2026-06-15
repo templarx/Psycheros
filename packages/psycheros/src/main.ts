@@ -18,6 +18,43 @@ import { VERSION } from "./version.ts";
 /**
  * Creates a simple client to talk to the MCP Gateway over HTTP.
  */
+async function createN8nMCPClient() {
+  const url = Deno.env.get("N8N_MCP_URL");
+  if (!url) return null;
+
+  console.log("[MCP] Connecting to n8n MCP...");
+
+  const n8nClient = {
+    async request(method: string, params?: Record<string, unknown>) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method,
+          params,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`n8n MCP request failed: ${response.status}`);
+      }
+
+      return response.json();
+    },
+  };
+
+  try {
+    const result = await n8nClient.request("tools/list");
+    console.log(`[MCP] ✅ Connected to n8n MCP (${result.result?.tools?.length ?? 0} tools)`);
+    return n8nClient;
+  } catch (err) {
+    console.error("[MCP] Failed to connect to n8n MCP:", err);
+    return null;
+  }
+}
+
 async function createMCPGatewayClient() {
   const url = Deno.env.get("MCP_GATEWAY_URL");
   if (!url) return null;
@@ -201,6 +238,20 @@ if (mcpEnabled) {
 
 // === NEW: MCP Gateway Client ===
 const gatewayClient = await createMCPGatewayClient();
+const n8nMCPClient = await createN8nMCPClient();   
+
+// Build remoteMCPs array (supports multiple sources)
+const remoteMCPs = [];
+
+if (gatewayClient) {
+  remoteMCPs.push({ name: "gateway", client: gatewayClient });
+}
+
+if (n8nMCPClient) {
+  remoteMCPs.push({ name: "n8n", client: n8nMCPClient });
+}
+
+//=================================
 
 // Ensure sqlite-vec extension is available
 await prepareVectorExtension(config.projectRoot);
@@ -208,7 +259,7 @@ await prepareVectorExtension(config.projectRoot);
 const server = new Server({
   ...config,
   mcpClient,
-  remoteMCPs: gatewayClient ? [{ name: "gateway", client: gatewayClient }] : [],
+  remoteMCPs,
 });
 
 await server.init();
