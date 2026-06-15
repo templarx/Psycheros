@@ -60,7 +60,7 @@ async function generateCustomToolWrappers(
 };
 `;
 
-        await writeFile(filePath, wrapperContent);
+        await Deno.writeTextFile(filePath, wrapperContent);
       }
     } catch (err) {
       console.error(`[Tools] Failed to generate wrappers for ${sourceName}:`, err.message);
