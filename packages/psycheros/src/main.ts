@@ -30,9 +30,9 @@ async function createN8nMCPClient() {
     async request(method: string, params?: Record<string, unknown>) {
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream", // ← This is usually required by n8n
       };
 
-      // Add token if available
       if (token) {
         headers["Authorization"] = `Bearer ${token}`;
       }
@@ -65,6 +65,8 @@ async function createN8nMCPClient() {
     return null;
   }
 }
+
+
 async function createMCPGatewayClient() {
   const url = Deno.env.get("MCP_GATEWAY_URL");
   if (!url) return null;
