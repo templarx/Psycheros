@@ -17,7 +17,6 @@ import { VERSION } from "./version.ts";
 
 //=====================GENERATES CUSTOM TOOLS FROM MCP
 import { ensureDir, writeFile } from "@std/fs";
-
 async function generateCustomToolWrappers(
   clients: Array<{ name: string; client: any }>
 ) {
@@ -29,6 +28,11 @@ async function generateCustomToolWrappers(
   for (const { name: sourceName, client } of clients) {
     if (!client) continue;
 
+    // Determine which URL to call based on the source
+    const targetUrl = sourceName === "n8n"
+      ? (Deno.env.get("N8N_MCP_URL") || "http://n8n:5678/mcp-server/http")
+      : (Deno.env.get("MCP_GATEWAY_URL") || "http://mcp-gateway:3019/mcp");
+
     try {
       const result = await client.request("tools/list");
       const tools = result.result?.tools || result.tools || [];
@@ -37,7 +41,7 @@ async function generateCustomToolWrappers(
         const wrapperName = `${sourceName}__${tool.name}`;
         const filePath = join(customToolsDir, `${wrapperName}.js`);
 
-       const wrapperContent = `
+        const wrapperContent = `
 export const definition = {
   function: {
     name: "${wrapperName}",
@@ -47,7 +51,7 @@ export const definition = {
 };
 
 export async function execute(args) {
-  const res = await fetch("${Deno.env.get("MCP_GATEWAY_URL") || "http://mcp-gateway:3019/mcp"}", {
+  const res = await fetch("${targetUrl}", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -63,6 +67,7 @@ export async function execute(args) {
   return res.json();
 }
 `;
+
         await Deno.writeTextFile(filePath, wrapperContent);
       }
     } catch (err) {
