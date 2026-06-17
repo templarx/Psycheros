@@ -331,7 +331,7 @@ if (mcpEnabled) {
 
 // === NEW: MCP Gateway Client ===
 const gatewayClient = await createMCPGatewayClient();
-const n8nMCPClient = await createN8nMCPClient();   
+//const n8nMCPClient = await createN8nMCPClient();   
 
 // Build remoteMCPs array (supports multiple sources)
 const remoteMCPs = [];
@@ -340,13 +340,13 @@ if (gatewayClient) {
   remoteMCPs.push({ name: "gateway", client: gatewayClient });
 }
 
-if (n8nMCPClient) {
-  remoteMCPs.push({ name: "n8n", client: n8nMCPClient });
-}
+//if (n8nMCPClient) {
+//  remoteMCPs.push({ name: "n8n", client: n8nMCPClient });
+//}
 // Generate custom tool wrappers from both sources
 const remoteClients = [];
 if (gatewayClient) remoteClients.push({ name: "gateway", client: gatewayClient });
-if (n8nMCPClient) remoteClients.push({ name: "n8n", client: n8nMCPClient });
+//if (n8nMCPClient) remoteClients.push({ name: "n8n", client: n8nMCPClient });
 
 if (remoteClients.length > 0) {
   await generateCustomToolWrappers(remoteClients);
