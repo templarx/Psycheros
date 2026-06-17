@@ -60,6 +60,12 @@ let tokenizer = null;
 let tokenizerReady = false;
 let tokenizerFailed = false;
 
+const PURIFY_CFG = {
+  ADD_TAGS: ['img'],
+  ADD_ATTR: ['src', 'alt', 'title', 'loading', 'width', 'height', 'class',
+ 'data-message-id', 'data-conversation-id', 'data-attachment-id', 'style']
+};
+
 // =============================================================================
 // Tokenizer
 // =============================================================================
@@ -1245,7 +1251,7 @@ async function sendMessage() {
   const messages = document.getElementById('messages');
   const userTime = formatChatTimestamp(new Date());
   if (messages) {
-    const userHtml = message ? DOMPurify.sanitize(marked.parse(message)) : '';
+    const userHtml = message ? DOMPurify.sanitize(marked.parse(message), PURIFY_CFG) : '';
     const attachmentHtml = attachmentUrl
       ? `<img src="${escapeHtml(attachmentUrl)}" class="attachment-in-message" alt="Attached image" loading="lazy"/>`
       : '';
@@ -1668,7 +1674,7 @@ function renderStreamingContent(contentEl, rawContent) {
   if (!cleaned.trim()) return;
   try {
     const html = marked.parse(cleaned);
-    contentEl.innerHTML = DOMPurify.sanitize(html);
+    contentEl.innerHTML = DOMPurify.sanitize(html, PURIFY_CFG);
     // Append typing cursor to the last block element
     const lastBlock = contentEl.lastElementChild || contentEl;
     if (!lastBlock.querySelector('.typing-cursor')) {
@@ -1711,7 +1717,7 @@ function renderFinalContent(contentEl, rawContent) {
   }
   try {
     const html = marked.parse(cleaned);
-    contentEl.innerHTML = DOMPurify.sanitize(html);
+    contentEl.innerHTML = DOMPurify.sanitize(html, PURIFY_CFG);
   } catch (e) {
     console.error('Final markdown parse error:', e);
     contentEl.textContent = cleaned;
