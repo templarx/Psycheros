@@ -34,6 +34,77 @@ const VIMEO_RE =
 // https://www.redgifs.com/ifr/<id>. Ids are 4-40 lowercase alphanumerics.
 const REDGIFS_RE =
   /(?:www\.)?redgifs\.com\/(?:watch\/|ifr\/|embed\/)?([a-z0-9]{4,40})/i;
+
+/**
+ * Adult video platform embedder — mirrors the client-side ADULT_PLATFORMS
+ * registry in web/js/media-embed.js. Each platform has a watch-URL regex
+ * and a function that transforms the matched id into the public embed URL.
+ *
+ * Adding a new platform here means adding it on the client too. Keep
+ * the two in sync — the server preprocessor and the client transformer
+ * agree on the same set of patterns.
+ */
+interface AdultPlatform {
+  name: string;
+  watchRe: RegExp;
+  toEmbedUrl: (id: string) => string;
+}
+
+const ADULT_PLATFORMS: AdultPlatform[] = [
+  {
+    name: "pornhub",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?pornhub\.com\/view_video\.php\?(?:.*&)?viewkey=([a-z0-9]+)/i,
+    toEmbedUrl: (id) => `https://www.pornhub.com/embed/${encodeURIComponent(id)}`,
+  },
+  {
+    name: "xvideos",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?xvideos\.com\/video\.([a-z0-9]+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.xvideos.com/embedframe/${encodeURIComponent(id)}`,
+  },
+  {
+    name: "xnxx",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?xnxx\.com\/video-([a-z0-9]+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.xnxx.com/embedframe/${encodeURIComponent(id)}`,
+  },
+  {
+    // zoo-xnxx is a mirror; same embed pattern as xnxx
+    name: "xnxx",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?zoo-xnxx\.com\/video-([a-z0-9]+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.xnxx.com/embedframe/${encodeURIComponent(id)}`,
+  },
+  {
+    name: "youporn",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?youporn\.com\/watch\/(\d+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.youporn.com/embed/${encodeURIComponent(id)}`,
+  },
+  {
+    name: "redtube",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?redtube\.com\/(\d+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.redtube.com/embed/${encodeURIComponent(id)}`,
+  },
+  {
+    name: "spankbang",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?spankbang\.com\/([a-z0-9]+)\/video\b/i,
+    toEmbedUrl: (id) => `https://spankbang.com/embed/${encodeURIComponent(id)}/`,
+  },
+  {
+    name: "luxuretv",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?luxuretv\.com\/videos\/[a-z0-9-]+-(\d+)\.html/i,
+    toEmbedUrl: (id) => `https://en.luxuretv.com/embed/${encodeURIComponent(id)}`,
+  },
+];
+
+function matchAdultPlatform(href: string): { id: string; embedUrl: string; platform: string } | null {
+  if (!isAbsoluteHttpUrl(href)) return null;
+  for (const p of ADULT_PLATFORMS) {
+    const m = href.match(p.watchRe);
+    if (m) {
+      return { id: m[1], embedUrl: p.toEmbedUrl(m[1]), platform: p.name };
+    }
+  }
+  return null;
+}
+
 const IMAGE_DOMAINS =
   /(?:^|\.)(imgur\.com|i\.imgur\.com|gyazo\.com|i\.redd\.it|preview\.redd\.it|wikimedia\.org|wikipedia\.org|githubusercontent\.com|cloudfront\.net|cdn\.|images\.|pbs\.twimg\.com|media\.tenor\.com|giphy\.com|media\d*\.giphy\.com|pinimg\.com|unsplash\.com|pexels\.com)$/i;
 
@@ -138,6 +209,18 @@ function redgifsEmbed(id: string, originalHref: string): string {
   );
 }
 
+function adultPlatformEmbed(
+  adult: { embedUrl: string; platform: string },
+  originalHref: string,
+): string {
+  return (
+    `<div class="chat-media chat-media-adult chat-media-${escapeAttr(adult.platform)}" data-media-embedded="1" data-original-src="${escapeAttr(originalHref)}" data-platform="${escapeAttr(adult.platform)}">` +
+    `<iframe src="${escapeAttr(adult.embedUrl)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen frameborder="0" scrolling="no" title="${escapeAttr(adult.platform)} video" referrerpolicy="no-referrer" loading="lazy"></iframe>` +
+    `<div class="chat-media-caption"><a href="${escapeAttr(originalHref)}" target="_blank" rel="noopener noreferrer">${escapeAttr(adult.platform)} — open original</a></div>` +
+    `</div>`
+  );
+}
+
 function videoEmbed(href: string): string {
   return (
     `<div class="chat-media chat-media-video" data-media-embedded="1" data-original-src="${escapeAttr(href)}">` +
@@ -168,6 +251,8 @@ function urlToEmbed(href: string): string {
   if (vimeoMatch) return vimeoEmbed(vimeoMatch, href);
   const rgId = redgifsId(href);
   if (rgId) return redgifsEmbed(rgId, href);
+  const adult = matchAdultPlatform(href);
+  if (adult) return adultPlatformEmbed(adult, href);
   if (isVideoUrl(href)) return videoEmbed(href);
   if (isAudioUrl(href)) return audioEmbed(href);
   if (isImageUrl(href)) return `![image](${href})`;

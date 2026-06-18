@@ -2255,6 +2255,25 @@
   display: block;
 }
 
+/* Adult video platform embeds (Pornhub, XVideos, XNXX, YouPorn, etc.).
+   Same 16:9 wrapper as YouTube/Vimeo. The .chat-media-adult class is
+   included on top of .chat-media-<platform> so the message area can
+   style or hide these independently if needed. */
+.chat-media-adult {
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%;
+}
+
+.chat-media-adult iframe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
 /* Redgifs: <video> element (we proxy the MP4 to bypass Cloudflare).
    No aspect-ratio padding because we set poster + controls directly. */
 .chat-media-redgifs {

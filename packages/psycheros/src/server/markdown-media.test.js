@@ -50,6 +50,43 @@ function redgifsId(href) {
   const m = href.match(REDGIFS_RE); return m ? m[1] : null;
 }
 
+// Adult platform embedder — mirror of web/js/media-embed.js ADULT_PLATFORMS
+const ADULT_PLATFORMS = [
+  { name: "pornhub",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?pornhub\.com\/view_video\.php\?(?:.*&)?viewkey=([a-z0-9]+)/i,
+    toEmbedUrl: (id) => `https://www.pornhub.com/embed/${id}` },
+  { name: "xvideos",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?xvideos\.com\/video\.([a-z0-9]+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.xvideos.com/embedframe/${id}` },
+  { name: "xnxx",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?xnxx\.com\/video-([a-z0-9]+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.xnxx.com/embedframe/${id}` },
+  { name: "xnxx",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?zoo-xnxx\.com\/video-([a-z0-9]+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.xnxx.com/embedframe/${id}` },
+  { name: "youporn",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?youporn\.com\/watch\/(\d+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.youporn.com/embed/${id}` },
+  { name: "redtube",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?redtube\.com\/(\d+)(?:\/|$|\?|#)/i,
+    toEmbedUrl: (id) => `https://www.redtube.com/embed/${id}` },
+  { name: "spankbang",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?spankbang\.com\/([a-z0-9]+)\/video\b/i,
+    toEmbedUrl: (id) => `https://spankbang.com/embed/${id}/` },
+  { name: "luxuretv",
+    watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?luxuretv\.com\/videos\/[a-z0-9-]+-(\d+)\.html/i,
+    toEmbedUrl: (id) => `https://en.luxuretv.com/embed/${id}` },
+];
+
+function matchAdultPlatform(href) {
+  if (!isAbsoluteHttpUrl(href)) return null;
+  for (const p of ADULT_PLATFORMS) {
+    const m = href.match(p.watchRe);
+    if (m) return { id: m[1], embedUrl: p.toEmbedUrl(m[1]), platform: p.name };
+  }
+  return null;
+}
+
 function urlToEmbed(href) {
   const yid = youtubeId(href);
   if (yid) return `<div class="chat-media chat-media-youtube" data-original-src="${href}"><iframe src="https://www.youtube-nocookie.com/embed/${yid}"></iframe></div>`;
@@ -57,6 +94,8 @@ function urlToEmbed(href) {
   if (vid) return `<div class="chat-media chat-media-vimeo" data-original-src="${href}"><iframe src="https://player.vimeo.com/video/${vid}"></iframe></div>`;
   const rgid = redgifsId(href);
   if (rgid) return `<div class="chat-media chat-media-redgifs" data-original-src="${href}"><iframe src="https://www.redgifs.com/ifr/${rgid}"></iframe></div>`;
+  const adult = matchAdultPlatform(href);
+  if (adult) return `<div class="chat-media chat-media-adult chat-media-${adult.platform}" data-original-src="${href}" data-platform="${adult.platform}"><iframe src="${adult.embedUrl}"></iframe></div>`;
   if (isVideoUrl(href)) return `<div class="chat-media chat-media-video" data-original-src="${href}"><video src="${href}" controls></video></div>`;
   if (isAudioUrl(href)) return `<div class="chat-media chat-media-audio" data-original-src="${href}"><audio src="${href}" controls></audio></div>`;
   if (isImageUrl(href)) return `![image](${href})`;
@@ -147,6 +186,46 @@ const t4b = 'Check this https://www.redgifs.com/watch/instructiveradianttamarin 
 const r4b = preprocessMediaUrls(t4b);
 contains('redgifs → iframe', r4b, 'chat-media-redgifs');
 contains('redgifs embed src', r4b, 'redgifs.com/ifr/instructiveradianttamarin');
+
+// Adult platforms — each watch URL must become the platform's embed iframe.
+function checkAdult(label, t, expectedClass, expectedEmbedUrl) {
+  const r = preprocessMediaUrls(t);
+  contains(label + ' class',   r, expectedClass);
+  contains(label + ' embed',  r, expectedEmbedUrl);
+}
+
+checkAdult('pornhub',
+  'watch https://www.pornhub.com/view_video.php?viewkey=ph5f7c8a9b1c2d3',
+  'chat-media-pornhub',
+  'pornhub.com/embed/ph5f7c8a9b1c2d3');
+checkAdult('xvideos',
+  'see https://www.xvideos.com/video.abc12345/title',
+  'chat-media-xvideos',
+  'xvideos.com/embedframe/abc12345');
+checkAdult('xnxx',
+  'see https://www.xnxx.com/video-uvw67890/title',
+  'chat-media-xnxx',
+  'xnxx.com/embedframe/uvw67890');
+checkAdult('zoo-xnxx (mirror)',
+  'see https://www.zoo-xnxx.com/video-uvw67890/title',
+  'chat-media-xnxx',
+  'xnxx.com/embedframe/uvw67890');
+checkAdult('youporn',
+  'see https://www.youporn.com/watch/1234567/title',
+  'chat-media-youporn',
+  'youporn.com/embed/1234567');
+checkAdult('redtube',
+  'see https://www.redtube.com/12345',
+  'chat-media-redtube',
+  'redtube.com/embed/12345');
+checkAdult('spankbang',
+  'see https://spankbang.com/abc12345/video/title',
+  'chat-media-spankbang',
+  'spankbang.com/embed/abc12345/');
+checkAdult('luxuretv (user URL)',
+  'see https://en.luxuretv.com/videos/great-dane-knotted-167363.html',
+  'chat-media-luxuretv',
+  'luxuretv.com/embed/167363');
 
 // Video file
 const t5 = 'Demo: https://example.com/clip.mp4';

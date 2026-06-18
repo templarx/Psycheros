@@ -46,6 +46,106 @@
    */
   const REDGIFS_RE = /(?:www\.)?redgifs\.com\/(?:watch\/|ifr\/|embed\/)?([a-z0-9]{4,40})/i;
 
+  /**
+   * Adult video platforms. Each entry knows how to detect a watch URL on its
+   * own domain and how to transform it into a public embed URL.
+   *
+   * The user's browser loads the embed URL directly — these platforms
+   * typically allow iframes from any origin (they want share/embed traffic).
+   * Cloudflare bot gating that breaks server-side fetches doesn't apply
+   * because the user's real browser session is what loads the iframe.
+   *
+   * Adding a new platform: append an entry with a name, watch URL regex, and
+   * embed URL builder. Keep `allow` consistent (autoplay + fullscreen).
+   *
+   * Note: ids use [a-z0-9]+ pattern for most platforms. Luxuretv uses
+   * digits-only ids at the tail of the slug. Spankbang ids are 4-12 digits.
+   */
+  const ADULT_PLATFORMS = [
+    {
+      name: "pornhub",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?pornhub\.com\/view_video\.php\?(?:.*&)?viewkey=([a-z0-9]+)/i,
+      toEmbedUrl: function (id) {
+        return "https://www.pornhub.com/embed/" + encodeURIComponent(id);
+      },
+    },
+    {
+      name: "xvideos",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?xvideos\.com\/video\.([a-z0-9]+)(?:\/|$|\?|#)/i,
+      toEmbedUrl: function (id) {
+        return "https://www.xvideos.com/embedframe/" + encodeURIComponent(id);
+      },
+    },
+    {
+      name: "xnxx",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?xnxx\.com\/video-([a-z0-9]+)(?:\/|$|\?|#)/i,
+      toEmbedUrl: function (id) {
+        return "https://www.xnxx.com/embedframe/" + encodeURIComponent(id);
+      },
+    },
+    {
+      // zoo-xnxx is a mirror; same embed pattern as xnxx
+      name: "xnxx",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?zoo-xnxx\.com\/video-([a-z0-9]+)(?:\/|$|\?|#)/i,
+      toEmbedUrl: function (id) {
+        return "https://www.xnxx.com/embedframe/" + encodeURIComponent(id);
+      },
+    },
+    {
+      name: "youporn",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?youporn\.com\/watch\/(\d+)(?:\/|$|\?|#)/i,
+      toEmbedUrl: function (id) {
+        return "https://www.youporn.com/embed/" + encodeURIComponent(id);
+      },
+    },
+    {
+      name: "redtube",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?redtube\.com\/(\d+)(?:\/|$|\?|#)/i,
+      toEmbedUrl: function (id) {
+        return "https://www.redtube.com/embed/" + encodeURIComponent(id);
+      },
+    },
+    {
+      name: "spankbang",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?spankbang\.com\/([a-z0-9]+)\/video\b/i,
+      toEmbedUrl: function (id) {
+        return "https://spankbang.com/embed/" + encodeURIComponent(id) + "/";
+      },
+    },
+    {
+      // Luxuretv URL shape: https://en.luxuretv.com/videos/<slug>-<id>.html
+      // The id is the digits just before the .html extension.
+      name: "luxuretv",
+      watchRe: /^https?:\/\/(?:[a-z0-9-]+\.)?luxuretv\.com\/videos\/[a-z0-9-]+-(\d+)\.html/i,
+      toEmbedUrl: function (id) {
+        // Luxuretv doesn't expose a separate /embed/<id> endpoint that we
+        // could verify. We fall back to the watch URL in an iframe — the
+        // browser will load the page and the player renders inside.
+        return "https://en.luxuretv.com/embed/" + encodeURIComponent(id);
+      },
+    },
+  ];
+
+  /**
+   * Try each platform's watchUrlRe against `href`. On match, return
+   * { id, embedUrl, platform }. Otherwise null.
+   */
+  function matchAdultPlatform(href) {
+    if (!isAbsoluteHttpUrl(href)) return null;
+    for (let i = 0; i < ADULT_PLATFORMS.length; i++) {
+      const p = ADULT_PLATFORMS[i];
+      const m = href.match(p.watchRe);
+      if (m) {
+        return {
+          id: m[1],
+          embedUrl: p.toEmbedUrl(m[1]),
+          platform: p.name,
+        };
+      }
+    }
+    return null;
+  }
+
   /** Domains that almost always serve images regardless of extension. */
   const IMAGE_DOMAINS = /(?:^|\.)(imgur\.com|i\.imgur\.com|gyazo\.com|i\.redd\.it|preview\.redd\.it|wikimedia\.org|wikipedia\.org|githubusercontent\.com|cloudfront\.net|cdn\.|images\.|pbs\.twimg\.com|media\.tenor\.com|giphy\.com|media\d*\.giphy\.com|pinimg\.com|unsplash\.com|pexels\.com)$/i;
 
@@ -297,6 +397,37 @@
     return wrap;
   }
 
+  /**
+   * Build an <iframe> embed for an adult video platform. Renders the
+   * platform's public embed URL inside a 16:9 wrapper. Sandboxed (no
+   * top navigation, no popups) to limit what the embedded page can do;
+   * same-origin only by default since these are public embeds.
+   */
+  function buildAdultPlatform(adult, originalHref) {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-media chat-media-adult chat-media-" + adult.platform;
+    wrap.dataset.mediaEmbedded = "1";
+    wrap.dataset.originalSrc = originalHref;
+    wrap.dataset.platform = adult.platform;
+    const iframe = document.createElement("iframe");
+    iframe.src = adult.embedUrl;
+    iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture");
+    iframe.setAttribute("allowfullscreen", "");
+    iframe.setAttribute("frameborder", "0");
+    iframe.setAttribute("scrolling", "no");
+    iframe.setAttribute("title", adult.platform + " video");
+    iframe.referrerPolicy = "no-referrer";
+    iframe.loading = "lazy";
+    wrap.appendChild(iframe);
+    const cap = document.createElement("div");
+    cap.className = "chat-media-caption";
+    cap.innerHTML = '<a href="' + escapeAttr(originalHref) +
+      '" target="_blank" rel="noopener noreferrer">' +
+      escapeHtml(adult.platform + " — open original") + "</a>";
+    wrap.appendChild(cap);
+    return wrap;
+  }
+
   // ----- Proxy helpers -----
 
   /**
@@ -369,12 +500,21 @@
           const rgId = redgifsId(href);
           if (rgId) {
             replacement = buildRedgifs(rgId, href);
-          } else if (isVideoUrl(href)) {
-            replacement = buildVideo(href);
-          } else if (isAudioUrl(href)) {
-            replacement = buildAudio(href);
-          } else if (isImageUrl(href)) {
-            replacement = buildImage(href, a.textContent || "");
+          } else {
+            // Adult video platforms (Pornhub, XVideos, XNXX, YouPorn,
+            // Redtube, SpankBang, Luxuretv, ...). Detected by domain +
+            // watch URL shape; rendered as the platform's public embed
+            // iframe so the user's browser loads the player directly.
+            const adult = matchAdultPlatform(href);
+            if (adult) {
+              replacement = buildAdultPlatform(adult, href);
+            } else if (isVideoUrl(href)) {
+              replacement = buildVideo(href);
+            } else if (isAudioUrl(href)) {
+              replacement = buildAudio(href);
+            } else if (isImageUrl(href)) {
+              replacement = buildImage(href, a.textContent || "");
+            }
           }
         }
       }
@@ -446,5 +586,6 @@
     youtubeId: youtubeId,
     vimeoId: vimeoId,
     redgifsId: redgifsId,
+    matchAdultPlatform: matchAdultPlatform,
   };
 })(typeof window !== "undefined" ? window : globalThis);

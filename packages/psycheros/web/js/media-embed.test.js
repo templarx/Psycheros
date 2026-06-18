@@ -143,6 +143,88 @@ check('redgifsId ifr',        M.redgifsId('https://www.redgifs.com/ifr/instructi
 check('redgifsId no-www',     M.redgifsId('https://redgifs.com/watch/instructiveradianttamarin'), 'instructiveradianttamarin');
 check('redgifsId non-redgifs', M.redgifsId('https://example.com/watch/abc'), null);
 
+// --- Adult platform embedder ---
+console.log('\n-- Adult platform URL detection --');
+
+function checkAdult(label, url, expectedPlatform, expectedEmbedUrl) {
+  const m = M.matchAdultPlatform(url);
+  const ok = m && m.platform === expectedPlatform && m.embedUrl === expectedEmbedUrl && m.id;
+  if (ok) { pass++; console.log(`  ok  ${label}`); }
+  else {
+    fail++;
+    console.error(`  FAIL ${label}`);
+    console.error(`       url    : ${url}`);
+    console.error(`       got    : ${JSON.stringify(m)}`);
+    console.error(`       want   : platform=${expectedPlatform}, embedUrl=${expectedEmbedUrl}`);
+  }
+}
+
+checkAdult(
+  'pornhub watch with viewkey',
+  'https://www.pornhub.com/view_video.php?viewkey=ph5f7c8a9b1c2d3',
+  'pornhub',
+  'https://www.pornhub.com/embed/ph5f7c8a9b1c2d3'
+);
+checkAdult(
+  'pornhub watch with viewkey + extra params',
+  'https://www.pornhub.com/view_video.php?viewkey=abc123&t=42',
+  'pornhub',
+  'https://www.pornhub.com/embed/abc123'
+);
+checkAdult(
+  'xvideos watch',
+  'https://www.xvideos.com/video.abc12345/my-slug-here',
+  'xvideos',
+  'https://www.xvideos.com/embedframe/abc12345'
+);
+checkAdult(
+  'xnxx watch',
+  'https://www.xnxx.com/video-uvw67890/some-title',
+  'xnxx',
+  'https://www.xnxx.com/embedframe/uvw67890'
+);
+checkAdult(
+  'zoo-xnxx mirror',
+  'https://www.zoo-xnxx.com/video-uvw67890/some-title',
+  'xnxx',
+  'https://www.xnxx.com/embedframe/uvw67890'
+);
+checkAdult(
+  'youporn watch',
+  'https://www.youporn.com/watch/1234567/some-title/',
+  'youporn',
+  'https://www.youporn.com/embed/1234567'
+);
+checkAdult(
+  'redtube watch',
+  'https://www.redtube.com/12345',
+  'redtube',
+  'https://www.redtube.com/embed/12345'
+);
+checkAdult(
+  'spankbang watch',
+  'https://spankbang.com/abc12345/video/some-title',
+  'spankbang',
+  'https://spankbang.com/embed/abc12345/'
+);
+checkAdult(
+  'luxuretv watch (user-supplied URL)',
+  'https://en.luxuretv.com/videos/great-dane-knotted-167363.html',
+  'luxuretv',
+  'https://en.luxuretv.com/embed/167363'
+);
+
+// Negative cases — should NOT match
+function checkAdultNull(label, url) {
+  const m = M.matchAdultPlatform(url);
+  const ok = m === null;
+  if (ok) { pass++; console.log(`  ok  ${label}`); }
+  else { fail++; console.error(`  FAIL ${label}: got ${JSON.stringify(m)}`); }
+}
+checkAdultNull('not adult',  'https://example.com/watch/123');
+checkAdultNull('plain page', 'https://example.com/');
+checkAdultNull('youtube',    'https://www.youtube.com/watch?v=dQw4w9WgXcQ');
+
 console.log('\n-- Summary --');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
