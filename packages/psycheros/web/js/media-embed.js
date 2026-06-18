@@ -172,20 +172,88 @@
    * https://www.redgifs.com/ifr/<id> that wraps the GIF/MP4 player without
    * requiring API keys. Same shape as the YouTube/Vimeo embeds (16:9).
    */
+  /**
+   * Build a Redgifs embed. We don't use the iframe — RedGifs serves a
+   * Cloudflare bot challenge from /ifr/<id> to non-cookied visitors, which
+   * means the iframe page is blank in a fresh browser session.
+   *
+   * Instead we ask our own /api/redgifs-embed?id=<id> for the direct MP4 +
+   * poster, then render a <video> whose src goes through /api/proxy-media.
+   * That way the browser fetches the MP4 same-origin from our server, which
+   * sends proper User-Agent / Referer and gets 200 OK from
+   * media.redgifs.com (the user's browser would otherwise get 403).
+   *
+   * Returns a placeholder element while the API call is in flight so the
+   * caller can synchronously insert it; the real <video> replaces the
+   * placeholder when the response arrives.
+   */
   function buildRedgifs(id, originalHref) {
     const wrap = document.createElement("div");
     wrap.className = "chat-media chat-media-redgifs";
     wrap.dataset.mediaEmbedded = "1";
     wrap.dataset.originalSrc = originalHref;
-    const iframe = document.createElement("iframe");
-    iframe.src = "https://www.redgifs.com/ifr/" + encodeURIComponent(id);
-    iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture");
-    iframe.setAttribute("allowfullscreen", "");
-    iframe.setAttribute("frameborder", "0");
-    iframe.setAttribute("title", "Redgifs video");
-    iframe.referrerPolicy = "no-referrer";
-    iframe.loading = "lazy";
-    wrap.appendChild(iframe);
+    wrap.dataset.redgifsId = id;
+    wrap.dataset.redgifsState = "loading";
+
+    const placeholder = document.createElement("div");
+    placeholder.className = "chat-media-redgifs-placeholder";
+    placeholder.textContent = "Loading Redgifs video…";
+    wrap.appendChild(placeholder);
+
+    // Asynchronously fetch the embed metadata and replace the placeholder.
+    fetch("/api/redgifs-embed?id=" + encodeURIComponent(id), {
+      headers: { "Accept": "application/json" },
+    })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("embed http " + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        if (!data || !data.mp4 || !data.poster) {
+          throw new Error("embed missing fields");
+        }
+        // Remove placeholder
+        while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+        // Build <video>
+        const video = document.createElement("video");
+        video.controls = true;
+        video.preload = "metadata";
+        video.poster = data.poster;
+        video.referrerPolicy = "no-referrer";
+        // Route MP4 through our proxy so the browser sees a same-origin
+        // request that won't be 403'd by Cloudflare's bot challenge.
+        video.src = proxyImageUrl(data.mp4);
+        video.title = data.title || ("Redgifs " + id);
+        wrap.appendChild(video);
+        // Caption with a fallback link to the original Redgifs watch page
+        const cap = document.createElement("div");
+        cap.className = "chat-media-caption";
+        const link = document.createElement("a");
+        link.href = originalHref;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.textContent = data.title || ("Redgifs " + id);
+        cap.appendChild(link);
+        wrap.appendChild(cap);
+        wrap.dataset.redgifsState = "ready";
+      })
+      .catch(function () {
+        // Fallback to the iframe if the embed resolver failed. The iframe
+        // will likely be blank (Cloudflare gate) but at least the user sees
+        // the link and can click through.
+        while (wrap.firstChild) wrap.removeChild(wrap.firstChild);
+        const iframe = document.createElement("iframe");
+        iframe.src = "https://www.redgifs.com/ifr/" + encodeURIComponent(id);
+        iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture");
+        iframe.setAttribute("allowfullscreen", "");
+        iframe.setAttribute("frameborder", "0");
+        iframe.setAttribute("title", "Redgifs video");
+        iframe.referrerPolicy = "no-referrer";
+        iframe.loading = "lazy";
+        wrap.appendChild(iframe);
+        wrap.dataset.redgifsState = "iframe-fallback";
+      });
+
     return wrap;
   }
 

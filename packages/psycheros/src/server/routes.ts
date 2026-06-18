@@ -10128,12 +10128,16 @@ export async function handleProxyImage(request: Request): Promise<Response> {
 
     const contentType = upstream.headers.get("Content-Type") ||
       "application/octet-stream";
-    // Refuse non-image content types early
+    // Refuse non-media content types early. This proxy serves images, video,
+    // and audio (used by the chat media-embedder for sites that gate direct
+    // fetches behind Cloudflare bot challenges, e.g. RedGifs media URLs).
     if (
       !/^image\//i.test(contentType) &&
+      !/^video\//i.test(contentType) &&
+      !/^audio\//i.test(contentType) &&
       !/^application\/octet-stream/i.test(contentType)
     ) {
-      return new Response("Upstream is not an image", {
+      return new Response("Upstream is not a media file", {
         status: 502,
         headers: { "Content-Type": "text/plain" },
       });
@@ -10163,6 +10167,185 @@ export async function handleProxyImage(request: Request): Promise<Response> {
     return new Response(
       "Proxy error: " + (err instanceof Error ? err.message : String(err)),
       { status: 502, headers: { "Content-Type": "text/plain" } },
+    );
+  }
+}
+
+// =============================================================================
+// Redgifs embed resolver
+// =============================================================================
+
+/**
+ * In-memory cache for Redgifs embed lookups. Idempotent — same id always
+ * returns the same JSON. Bounded LRU. 1 hour TTL since Redgifs URLs are
+ * effectively permanent (they don't expire like signed CDN URLs).
+ */
+const REDGIFS_CACHE_MAX = 256;
+const REDGIFS_CACHE_TTL_MS = 60 * 60 * 1000;
+interface CachedRedgifs {
+  mp4: string;
+  poster: string;
+  title: string;
+  expiresAt: number;
+}
+const redgifsCache = new Map<string, CachedRedgifs>();
+
+function redgifsCacheGet(id: string): CachedRedgifs | null {
+  const entry = redgifsCache.get(id);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    redgifsCache.delete(id);
+    return null;
+  }
+  redgifsCache.delete(id);
+  redgifsCache.set(id, entry);
+  return entry;
+}
+function redgifsCachePut(id: string, entry: CachedRedgifs): void {
+  if (redgifsCache.has(id)) redgifsCache.delete(id);
+  redgifsCache.set(id, entry);
+  while (redgifsCache.size > REDGIFS_CACHE_MAX) {
+    const oldest = redgifsCache.keys().next().value;
+    if (oldest === undefined) break;
+    redgifsCache.delete(oldest);
+  }
+}
+
+const REDGIFS_ID_RE = /^[a-z0-9]{4,40}$/i;
+
+/**
+ * Handle GET /api/redgifs-embed?id=<id>
+ *
+ * Resolves a Redgifs id (the lowercase slug from the watch URL) to its
+ * direct MP4 + poster URLs. The Redgifs oEmbed iframe and the bare iframe
+ * page are both Cloudflare-gated for non-cookied visitors, so embedding
+ * them as-is gives a blank player. Instead, we call Redgifs' public,
+ * non-gated API at https://api.redgifs.com/v1/gifs/<id> from the server,
+ * extract the direct media URLs, and return them. The chat media-embedder
+ * then renders a <video> with src="/api/proxy-media?url=<mp4>" so the
+ * browser fetches the MP4 via this server (which sends proper User-Agent
+ * headers and bypasses the 403 the browser would otherwise see).
+ *
+ * Response: { id, mp4, poster, title, duration, width, height }
+ * On error: 404 if id is malformed, 502 if the upstream API fails.
+ */
+export async function handleRedgifsEmbed(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const id = (url.searchParams.get("id") || "").trim();
+  if (!REDGIFS_ID_RE.test(id)) {
+    return new Response(JSON.stringify({ error: "Invalid Redgifs id" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+
+  const cached = redgifsCacheGet(id);
+  if (cached) {
+    return new Response(
+      JSON.stringify({
+        id,
+        mp4: cached.mp4,
+        poster: cached.poster,
+        title: cached.title,
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=300",
+          "X-Redgifs-Cache": "HIT",
+        },
+      },
+    );
+  }
+
+  try {
+    const upstream = await fetch(
+      `https://api.redgifs.com/v1/gifs/${encodeURIComponent(id)}`,
+      {
+        method: "GET",
+        redirect: "follow",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (compatible; PsycherosBot/1.0; +https://github.com/templarx/Psycheros)",
+          "Accept": "application/json",
+        },
+      },
+    );
+    if (!upstream.ok) {
+      return new Response(
+        JSON.stringify({
+          error: `Redgifs API returned ${upstream.status}`,
+        }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    const json = await upstream.json();
+    const item = json?.gfyItem;
+    if (!item) {
+      return new Response(
+        JSON.stringify({ error: "Redgifs API returned no gfyItem" }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    const mp4: string | undefined = item?.content_urls?.mp4?.url ||
+      item?.content_urls?.mobile?.url;
+    const poster: string | undefined = item?.content_urls?.poster?.url ||
+      item?.content_urls?.mobilePoster?.url;
+    if (!mp4 || !poster) {
+      return new Response(
+        JSON.stringify({ error: "Redgifs API missing mp4/poster urls" }),
+        {
+          status: 502,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }
+    const title: string = item.title || item.gifName || id;
+    const duration: number | undefined = typeof item.duration === "number"
+      ? item.duration
+      : undefined;
+    const width: number | undefined = typeof item.width === "number"
+      ? item.width
+      : undefined;
+    const height: number | undefined = typeof item.height === "number"
+      ? item.height
+      : undefined;
+
+    redgifsCachePut(id, {
+      mp4,
+      poster,
+      title,
+      expiresAt: Date.now() + REDGIFS_CACHE_TTL_MS,
+    });
+
+    return new Response(
+      JSON.stringify({ id, mp4, poster, title, duration, width, height }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "public, max-age=300",
+          "X-Redgifs-Cache": "MISS",
+        },
+      },
+    );
+  } catch (err) {
+    return new Response(
+      JSON.stringify({
+        error: "Resolver error: " +
+          (err instanceof Error ? err.message : String(err)),
+      }),
+      {
+        status: 502,
+        headers: { "Content-Type": "application/json" },
+      },
     );
   }
 }

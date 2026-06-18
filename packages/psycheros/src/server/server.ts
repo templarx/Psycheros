@@ -195,6 +195,7 @@ import {
   handleMemoryConsolidate,
   handleMessagesPaginated,
   handleProxyImage,
+  handleRedgifsEmbed,
   handlePushSubscribe,
   handlePushUnsubscribe,
   handlePushVapidKey,
@@ -1736,12 +1737,21 @@ export class Server {
       return await handleChat(ctx, request);
     }
 
-    // GET /api/proxy-image - Hotlink-proof image proxy
-    // Forwards cross-origin image fetches with a real User-Agent so CDNs and
+    // GET /api/proxy-image - Hotlink-proof image / video / audio proxy
+    // Forwards cross-origin media fetches with a real User-Agent so CDNs and
     // Wikimedia (which rejects bare fetches) accept the request. Used by the
-    // chat media-embedder to render images from any website reliably.
+    // chat media-embedder to render images, videos, and audio from any
+    // website reliably.
     if (method === "GET" && path === "/api/proxy-image") {
       return await handleProxyImage(request);
+    }
+
+    // GET /api/redgifs-embed - Resolve a Redgifs id to direct mp4 + poster.
+    // Bypasses the iframe Cloudflare gate by using Redgifs' ungated JSON API.
+    // Used by the chat media-embedder to upgrade Redgifs URLs into a
+    // playable <video> with proxy-served MP4.
+    if (method === "GET" && path === "/api/redgifs-embed") {
+      return await handleRedgifsEmbed(request);
     }
 
     // GET /api/events - Persistent SSE event stream

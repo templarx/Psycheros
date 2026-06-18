@@ -2239,22 +2239,44 @@
 
 /* YouTube / Vimeo iframe: 16:9 aspect ratio wrapper */
 .chat-media-youtube,
-.chat-media-vimeo,
-.chat-media-redgifs {
+.chat-media-vimeo {
   position: relative;
   width: 100%;
   padding-top: 56.25%; /* 16:9 */
 }
 
 .chat-media-youtube iframe,
-.chat-media-vimeo iframe,
-.chat-media-redgifs iframe {
+.chat-media-vimeo iframe {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   border: 0;
   display: block;
+}
+
+/* Redgifs: <video> element (we proxy the MP4 to bypass Cloudflare).
+   No aspect-ratio padding because we set poster + controls directly. */
+.chat-media-redgifs {
+  display: block;
+}
+
+.chat-media-redgifs video {
+  display: block;
+  width: 100%;
+  max-height: 540px;
+  background: #000;
+}
+
+.chat-media-redgifs-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 200px;
+  background: var(--c-bg-sunken);
+  color: var(--c-fg-muted);
+  font-size: var(--font-size-xs);
 }
 
 /* Direct video / audio */
