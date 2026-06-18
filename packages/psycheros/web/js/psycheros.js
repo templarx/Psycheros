@@ -61,9 +61,16 @@ let tokenizerReady = false;
 let tokenizerFailed = false;
 
 const PURIFY_CFG = {
-  ADD_TAGS: ['img'],
-  ADD_ATTR: ['src', 'alt', 'title', 'loading', 'width', 'height', 'class',
- 'data-message-id', 'data-conversation-id', 'data-attachment-id', 'style']
+  ADD_TAGS: ['img', 'iframe', 'video', 'audio', 'source', 'figure', 'figcaption'],
+  ADD_ATTR: [
+    'src', 'alt', 'title', 'loading', 'width', 'height', 'class',
+    'data-message-id', 'data-conversation-id', 'data-attachment-id', 'style',
+    // Media embed attributes (used by web/js/media-embed.js)
+    'allow', 'allowfullscreen', 'frameborder',
+    'controls', 'preload', 'poster',
+    'referrerpolicy', 'decoding',
+    'data-media-embedded', 'data-original-src',
+  ],
 };
 
 // =============================================================================
@@ -642,6 +649,11 @@ document.addEventListener('DOMContentLoaded', () => {
   document.body.addEventListener('htmx:afterSwap', (e) => {
     const targetId = e.detail.target?.id;
     if (targetId === 'chat') {
+      // Server-rendered history just landed — transform any bare media links
+      // (image / video / YouTube / Vimeo) into rich embeds.
+      if (globalThis.PsycherosMediaEmbed) {
+        globalThis.PsycherosMediaEmbed.processMediaLinks(e.detail.target);
+      }
       AutoScroll.reinit();
       if (document.getElementById('load-earlier-sentinel') && currentConversationId) {
         LazyLoader.init(currentConversationId);
@@ -1264,6 +1276,11 @@ async function sendMessage() {
         <div class="msg-content user-text">${attachmentHtml}${userHtml}</div>
       </div>
     `);
+    // Process media embeds for the just-inserted user message
+    const lastUserMsg = messages.querySelector('.msg--user:last-child .user-text');
+    if (lastUserMsg && globalThis.PsycherosMediaEmbed) {
+      globalThis.PsycherosMediaEmbed.processMediaLinks(lastUserMsg);
+    }
   }
   AutoScroll.jumpToBottom();
 
@@ -1662,6 +1679,12 @@ function stripEntityXml(text) {
 // blockquotes and other multi-line content (e.g. group chat transcripts).
 marked.setOptions({ breaks: true, gfm: true });
 
+// Extend DOMPurify with media-embed config (allows iframe / video / audio).
+// Must run before any DOMPurify.sanitize() call.
+if (globalThis.PsycherosMediaEmbed && typeof globalThis.PsycherosMediaEmbed.configureDOMPurify === 'function') {
+  globalThis.PsycherosMediaEmbed.configureDOMPurify();
+}
+
 /** Debounce timer for progressive markdown rendering */
 let _renderTimer = null;
 
@@ -1675,6 +1698,10 @@ function renderStreamingContent(contentEl, rawContent) {
   try {
     const html = marked.parse(cleaned);
     contentEl.innerHTML = DOMPurify.sanitize(html, PURIFY_CFG);
+    // Transform bare media links (image / video / YouTube / Vimeo) into embeds.
+    if (globalThis.PsycherosMediaEmbed) {
+      globalThis.PsycherosMediaEmbed.processMediaLinks(contentEl);
+    }
     // Append typing cursor to the last block element
     const lastBlock = contentEl.lastElementChild || contentEl;
     if (!lastBlock.querySelector('.typing-cursor')) {
@@ -1718,6 +1745,10 @@ function renderFinalContent(contentEl, rawContent) {
   try {
     const html = marked.parse(cleaned);
     contentEl.innerHTML = DOMPurify.sanitize(html, PURIFY_CFG);
+    // Transform bare media links (image / video / YouTube / Vimeo) into embeds.
+    if (globalThis.PsycherosMediaEmbed) {
+      globalThis.PsycherosMediaEmbed.processMediaLinks(contentEl);
+    }
   } catch (e) {
     console.error('Final markdown parse error:', e);
     contentEl.textContent = cleaned;
@@ -2300,6 +2331,15 @@ const LazyLoader = (() => {
       // Adjust scroll so the user stays at the same content
       const addedHeight = messages.scrollHeight - prevScrollHeight;
       messages.scrollTop = prevScrollTop + addedHeight;
+
+      // Transform any bare media links in the newly-loaded older messages.
+      if (globalThis.PsycherosMediaEmbed) {
+        for (const node of nodes) {
+          if (node.nodeType === 1) {
+            globalThis.PsycherosMediaEmbed.processMediaLinks(node);
+          }
+        }
+      }
 
       // Update cursor for next fetch
       if (oldestCreatedAt) {
@@ -4436,22 +4476,25 @@ async function loadGallery(offset) {
     galleryOffset = offset + 24;
     const esc = function(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
 
-    const cardsHtml = data.images.map(function(img) {
+const cardsHtml = data.images.map(function(img) {
       const sizeStr = img.size >= 1024 * 1024 ? (img.size / (1024 * 1024)).toFixed(1) + ' MB' : (img.size / 1024).toFixed(1) + ' KB';
       const dateStr = img.createdAt ? new Date(img.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
       const shortName = img.filename.length > 20 ? img.filename.substring(0, 8) + '...' + img.filename.slice(-8) : img.filename;
+      // Encode URL/filename for safe attribute embedding (avoid quote-breakage).
+      const safeUrl = encodeURI(img.url);
+      const safeFilename = encodeURI(img.filename);
       const promptAttr = img.prompt ? ' title="' + esc(img.prompt) + '"' : '';
       const catLabel = img.category === 'generated' ? 'generated' : 'uploaded';
       const catClass = img.category === 'generated' ? 'gallery-badge--generated' : 'gallery-badge--user';
-      return '<div class="gallery-card" data-category="' + img.category + '"' + promptAttr + '>'
+      return '<div class="gallery-card" data-category="' + esc(img.category) + '"' + promptAttr + ' data-url="' + safeUrl + '" data-filename="' + safeFilename + '">'
         + '<div class="gallery-thumb-wrap">'
-        + '<img src="' + esc(img.url) + '" class="gallery-thumb" loading="lazy" onclick="openLightbox(\'' + esc(img.url) + '\',\'' + esc(img.filename) + '\')"/>'
+        + '<img src="' + esc(img.url) + '" class="gallery-thumb" loading="lazy" referrerpolicy="no-referrer"/>'
         + '<span class="gallery-badge ' + catClass + '">' + catLabel + '</span>'
         + '</div>'
         + '<div class="gallery-meta">'
         + '<span class="gallery-filename" title="' + esc(img.filename) + '">' + esc(shortName) + '</span>'
-        + '<button class="gallery-copy-btn" onclick="event.stopPropagation();copyFilename(\'' + esc(img.filename) + '\',this)" title="Copy filename">'
-        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1 2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+        + '<button class="gallery-copy-btn" data-filename="' + safeFilename + '" title="Copy filename">'
+        + '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
         + '</button>'
         + '</div>'
         + '<div class="gallery-info">' + sizeStr + ' &middot; ' + dateStr + '</div>'
@@ -4463,9 +4506,40 @@ async function loadGallery(offset) {
     const loadMoreDiv = container.querySelector('.gallery-load-more');
     if (loadMoreDiv) loadMoreDiv.remove();
     if (data.hasMore) container.insertAdjacentHTML('beforeend', '<div class="gallery-load-more"><button class="btn btn--sm" onclick="loadMoreGallery()">Load more</button></div>');
+
+    // Wire delegated handlers for the freshly-inserted gallery cards.
+    // Avoids inline onclick attributes (safer + fixes the historic
+    // `+ esc(img.url) +` template-string bug for filenames containing quotes).
+    bindGalleryCardHandlers(container);
   } catch (e) {
     console.error('Failed to load more gallery images:', e);
   }
+}
+
+/**
+ * Delegate click handlers for newly-inserted gallery cards.
+ * Avoids inline onclick attributes whose quoting would break on filenames
+ * containing apostrophes / quotes. Uses data-url and data-filename attributes.
+ */
+function bindGalleryCardHandlers(container) {
+  if (!container || container._galleryHandlersBound) return;
+  container._galleryHandlersBound = true;
+  container.addEventListener('click', function(e) {
+    const copyBtn = e.target.closest && e.target.closest('.gallery-copy-btn');
+    if (copyBtn) {
+      e.stopPropagation();
+      e.preventDefault();
+      const filename = decodeURI(copyBtn.dataset.filename || '');
+      if (filename) copyFilename(filename, copyBtn);
+      return;
+    }
+    const card = e.target.closest && e.target.closest('.gallery-card');
+    if (card && !e.target.closest('.gallery-copy-btn')) {
+      const url = decodeURI(card.dataset.url || '');
+      const filename = decodeURI(card.dataset.filename || '');
+      if (url) openLightbox(url, filename);
+    }
+  });
 }
 
 globalThis.copyFilename = async function(filename, btn) {
@@ -4489,18 +4563,36 @@ globalThis.openLightbox = function(url, filename) {
   overlay.className = 'gallery-lightbox';
   overlay.id = 'gallery-lightbox';
   overlay.onclick = function(e) { if (e.target === overlay) closeLightbox(); };
-  overlay.innerHTML = '<button class="gallery-lightbox-close" onclick="closeLightbox()">&times;</button>'
-    + '<img src="' + url + '" onclick="event.stopPropagation()"/>'
-    + '<div class="gallery-lightbox-info">' + filename + '</div>';
+
+  // Build via DOM API instead of HTML interpolation — prevents XSS via URL
+  // and avoids the earlier `'+ url +'` template-string bug surfacing as a
+  // broken `src="/c/' + url + '"` attribute when url is undefined.
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'gallery-lightbox-close';
+  closeBtn.onclick = closeLightbox;
+  closeBtn.innerHTML = '&times;';
+
+  const lightboxImg = document.createElement('img');
+  lightboxImg.src = url;
+  lightboxImg.referrerPolicy = 'no-referrer';
+  lightboxImg.onclick = function(e) { e.stopPropagation(); };
+
+  const info = document.createElement('div');
+  info.className = 'gallery-lightbox-info';
+  info.textContent = filename || '';
+
+  overlay.appendChild(closeBtn);
+  overlay.appendChild(lightboxImg);
+  overlay.appendChild(info);
   document.body.appendChild(overlay);
   document.addEventListener('keydown', closeLightboxOnEsc);
 
   // Swipe to dismiss on touch devices
   let startY = 0;
-  const img = overlay.querySelector('img');
-  if (img) {
-    img.addEventListener('touchstart', function(e) { startY = e.touches[0].clientY; }, { passive: true });
-    img.addEventListener('touchend', function(e) {
+  const swipeImg = overlay.querySelector('img');
+  if (swipeImg) {
+    swipeImg.addEventListener('touchstart', function(e) { startY = e.touches[0].clientY; }, { passive: true });
+    swipeImg.addEventListener('touchend', function(e) {
       const dy = e.changedTouches[0].clientY - startY;
       if (dy > 80) closeLightbox();
     }, { passive: true });
@@ -4524,8 +4616,17 @@ document.body.addEventListener('htmx:afterSwap', function(e) {
     const gc = document.getElementById('gallery-container');
     if (gc) {
       galleryOffset = parseInt(gc.getAttribute('data-gallery-offset') || '0', 10);
+      // Reset binding flag so freshly-loaded gallery cards get event handlers.
+      delete gc._galleryHandlersBound;
+      bindGalleryCardHandlers(gc);
     }
   }
+});
+
+// Also bind once on initial page load (gallery may be server-rendered)
+document.addEventListener('DOMContentLoaded', function() {
+  const gc = document.getElementById('gallery-container');
+  if (gc) bindGalleryCardHandlers(gc);
 });
 
 // =============================================================================

@@ -194,6 +194,7 @@ import {
   handleMemoriesSearchFragment,
   handleMemoryConsolidate,
   handleMessagesPaginated,
+  handleProxyImage,
   handlePushSubscribe,
   handlePushUnsubscribe,
   handlePushVapidKey,
@@ -1733,6 +1734,14 @@ export class Server {
     // POST /api/chat - Stream chat response
     if (method === "POST" && path === "/api/chat") {
       return await handleChat(ctx, request);
+    }
+
+    // GET /api/proxy-image - Hotlink-proof image proxy
+    // Forwards cross-origin image fetches with a real User-Agent so CDNs and
+    // Wikimedia (which rejects bare fetches) accept the request. Used by the
+    // chat media-embedder to render images from any website reliably.
+    if (method === "GET" && path === "/api/proxy-image") {
+      return await handleProxyImage(request);
     }
 
     // GET /api/events - Persistent SSE event stream

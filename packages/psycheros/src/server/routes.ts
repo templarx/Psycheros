@@ -9996,3 +9996,173 @@ export async function handleDeleteEventRule(
     );
   }
 }
+
+// =============================================================================
+// Image Proxy (hotlink workaround for Wikimedia, Imgur, GitHub raw, etc.)
+// =============================================================================
+
+/**
+ * Tiny in-memory LRU + size-cap cache for proxied image responses.
+ * Keyed by full target URL. Stores the response body bytes + headers.
+ * Bounded by entry count to prevent unbounded memory growth.
+ */
+const IMAGE_PROXY_MAX_ENTRIES = 64;
+const IMAGE_PROXY_TTL_MS = 10 * 60 * 1000; // 10 minutes
+const IMAGE_PROXY_MAX_BYTES = 25 * 1024 * 1024; // 25 MB hard cap
+
+interface CachedImage {
+  body: Uint8Array;
+  contentType: string;
+  expiresAt: number;
+}
+const imageProxyCache = new Map<string, CachedImage>();
+
+function cacheGet(key: string): CachedImage | null {
+  const entry = imageProxyCache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt < Date.now()) {
+    imageProxyCache.delete(key);
+    return null;
+  }
+  // LRU touch
+  imageProxyCache.delete(key);
+  imageProxyCache.set(key, entry);
+  return entry;
+}
+
+function cachePut(key: string, entry: CachedImage): void {
+  if (imageProxyCache.has(key)) imageProxyCache.delete(key);
+  imageProxyCache.set(key, entry);
+  while (imageProxyCache.size > IMAGE_PROXY_MAX_ENTRIES) {
+    const oldest = imageProxyCache.keys().next().value;
+    if (oldest === undefined) break;
+    imageProxyCache.delete(oldest);
+  }
+}
+
+/**
+ * Handle GET /api/proxy-image?url=<absolute https url>
+ *
+ * Fetches the image server-side with a real User-Agent and returns the bytes.
+ * Bypasses hotlink restrictions (Wikimedia requires a User-Agent; many CDNs
+ * block requests with no UA, mismatched Origin, or browser-default Accept).
+ * Caches the response in-memory to avoid hammering upstream.
+ *
+ * Security:
+ *   - Only http/https URLs allowed
+ *   - Refuses private/loopback hosts (SSRF guard)
+ *   - Refuses anything larger than IMAGE_PROXY_MAX_BYTES
+ *   - Returns cached content-type if available, otherwise the upstream's
+ */
+export async function handleProxyImage(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const target = url.searchParams.get("url");
+  if (!target) {
+    return new Response("Missing ?url=", { status: 400 });
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return new Response("Invalid URL", { status: 400 });
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return new Response("Only http/https URLs allowed", { status: 400 });
+  }
+  // SSRF guard — block private networks and loopback
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host === "127.0.0.1" ||
+    host === "::1" ||
+    host === "0.0.0.0" ||
+    host.endsWith(".local") ||
+    host.endsWith(".internal") ||
+    /^10\./.test(host) ||
+    /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    /^169\.254\./.test(host) ||
+    /^fc[0-9a-f]{2}:/i.test(host) ||
+    /^fe80:/i.test(host)
+  ) {
+    return new Response("Blocked host", { status: 403 });
+  }
+
+  const cacheKey = target;
+  const cached = cacheGet(cacheKey);
+  if (cached) {
+    return new Response(cached.body, {
+      status: 200,
+      headers: {
+        "Content-Type": cached.contentType,
+        "Cache-Control": "public, max-age=600",
+        "X-Proxy-Cache": "HIT",
+      },
+    });
+  }
+
+  try {
+    const upstream = await fetch(parsed.toString(), {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        // Wikimedia and several CDNs reject requests without a real UA.
+        // Chrome / Safari are accepted by virtually every host.
+        "User-Agent":
+          "Mozilla/5.0 (compatible; PsycherosBot/1.0; +https://github.com/templarx/Psycheros)",
+        "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+      },
+    });
+
+    if (!upstream.ok) {
+      return new Response(
+        `Upstream returned ${upstream.status} ${upstream.statusText}`,
+        {
+          status: 502,
+          headers: { "Content-Type": "text/plain" },
+        },
+      );
+    }
+
+    const contentType = upstream.headers.get("Content-Type") ||
+      "application/octet-stream";
+    // Refuse non-image content types early
+    if (
+      !/^image\//i.test(contentType) &&
+      !/^application\/octet-stream/i.test(contentType)
+    ) {
+      return new Response("Upstream is not an image", {
+        status: 502,
+        headers: { "Content-Type": "text/plain" },
+      });
+    }
+
+    const ab = await upstream.arrayBuffer();
+    if (ab.byteLength > IMAGE_PROXY_MAX_BYTES) {
+      return new Response("Image too large", { status: 413 });
+    }
+    const body = new Uint8Array(ab);
+
+    cachePut(cacheKey, {
+      body,
+      contentType,
+      expiresAt: Date.now() + IMAGE_PROXY_TTL_MS,
+    });
+
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": contentType,
+        "Cache-Control": "public, max-age=600",
+        "X-Proxy-Cache": "MISS",
+      },
+    });
+  } catch (err) {
+    return new Response(
+      "Proxy error: " + (err instanceof Error ? err.message : String(err)),
+      { status: 502, headers: { "Content-Type": "text/plain" } },
+    );
+  }
+}

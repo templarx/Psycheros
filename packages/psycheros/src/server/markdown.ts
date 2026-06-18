@@ -1,16 +1,62 @@
 import { marked } from "marked";
 import sanitizeHtml from "sanitize-html";
+import { preprocessMediaUrls } from "./markdown-media.ts";
 
 const sanitizerOptions = {
-  allowedTags: [...sanitizeHtml.defaults.allowedTags, "img", "del"],
+  allowedTags: [
+    ...sanitizeHtml.defaults.allowedTags,
+    "img",
+    "del",
+    // Media embeds — used by the chat media-embedder (client + server).
+    // We allow these tags so rich previews render; we still strip dangerous
+    // attributes (e.g. javascript: on*) via sanitize-html's defaults.
+    "iframe",
+    "video",
+    "audio",
+    "source",
+    "figure",
+    "figcaption",
+  ],
   allowedAttributes: {
     ...sanitizeHtml.defaults.allowedAttributes,
-    img: ["src", "alt", "title", "width", "height"],
-    code: ["class"],
-    pre: ["class"],
+    img: [
+      "src", "alt", "title", "width", "height",
+      "loading", "referrerpolicy", "decoding",
+      "class", "data-original-src", "data-media-embedded",
+    ],
+    a: ["href", "name", "target", "rel", "class"],
+    iframe: [
+      "src", "title", "width", "height",
+      "allow", "allowfullscreen", "frameborder",
+      "loading", "referrerpolicy",
+    ],
+    video: [
+      "src", "controls", "preload", "poster",
+      "loop", "muted", "autoplay", "width", "height",
+    ],
+    audio: ["src", "controls", "preload", "loop", "muted", "autoplay"],
+    source: ["src", "type", "media", "sizes"],
+    div: ["class", "data-media-embedded", "data-original-src"],
     span: ["class"],
-    div: ["class"],
   },
+  allowedSchemes: ["http", "https", "data", "mailto"],
+  allowedSchemesByTag: {
+    img: ["http", "https", "data"],
+    video: ["http", "https"],
+    audio: ["http", "https"],
+    source: ["http", "https"],
+    iframe: ["http", "https"],
+  },
+  allowedIframeHostnames: [
+    "www.youtube.com",
+    "youtube.com",
+    "youtube-nocookie.com",
+    "www.youtube-nocookie.com",
+    "player.vimeo.com",
+    "vimeo.com",
+    "open.spotify.com",
+    "w.soundcloud.com",
+  ],
 };
 
 // Configure marked for Deno-compatible settings
@@ -91,6 +137,10 @@ export function renderMarkdown(text: string): string {
   if (!text) return "";
   const cleaned = stripEntityXml(text);
   if (!cleaned.trim()) return "";
-  const html = marked.parse(cleaned) as string;
+  // Convert bare media URLs (image / video / YouTube / Vimeo) into embed
+  // HTML or markdown image syntax before parsing. Runs client-side too via
+  // web/js/media-embed.js — both paths must agree on output.
+  const preprocessed = preprocessMediaUrls(cleaned);
+  const html = marked.parse(preprocessed) as string;
   return sanitizeHtml(html, sanitizerOptions);
 }

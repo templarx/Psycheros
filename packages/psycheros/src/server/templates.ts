@@ -271,6 +271,7 @@ export function renderAppShell(): string {
   <script src="/lib/htmx-sse.js"></script>
   <script src="/lib/marked.min.js"></script>
   <script src="/lib/dompurify.min.js"></script>
+  <script src="/js/media-embed.js"></script>
 </head>
 <body>
   <div class="bg-layer"></div>
