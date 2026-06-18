@@ -2239,14 +2239,16 @@
 
 /* YouTube / Vimeo iframe: 16:9 aspect ratio wrapper */
 .chat-media-youtube,
-.chat-media-vimeo {
+.chat-media-vimeo,
+.chat-media-redgifs {
   position: relative;
   width: 100%;
   padding-top: 56.25%; /* 16:9 */
 }
 
 .chat-media-youtube iframe,
-.chat-media-vimeo iframe {
+.chat-media-vimeo iframe,
+.chat-media-redgifs iframe {
   position: absolute;
   inset: 0;
   width: 100%;

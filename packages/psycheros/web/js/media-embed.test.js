@@ -138,6 +138,11 @@ check('vimeoId basic', M.vimeoId('https://vimeo.com/123456789'), '123456789');
 check('vimeoId player', M.vimeoId('https://player.vimeo.com/video/123456789'), '123456789');
 check('vimeoId non-vimeo', M.vimeoId('https://example.com/123456789'), null);
 
+check('redgifsId watch',     M.redgifsId('https://www.redgifs.com/watch/instructiveradianttamarin'), 'instructiveradianttamarin');
+check('redgifsId ifr',        M.redgifsId('https://www.redgifs.com/ifr/instructiveradianttamarin'), 'instructiveradianttamarin');
+check('redgifsId no-www',     M.redgifsId('https://redgifs.com/watch/instructiveradianttamarin'), 'instructiveradianttamarin');
+check('redgifsId non-redgifs', M.redgifsId('https://example.com/watch/abc'), null);
+
 console.log('\n-- Summary --');
 console.log(`${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

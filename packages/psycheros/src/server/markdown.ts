@@ -54,6 +54,8 @@ const sanitizerOptions = {
     "www.youtube-nocookie.com",
     "player.vimeo.com",
     "vimeo.com",
+    "www.redgifs.com",
+    "redgifs.com",
     "open.spotify.com",
     "w.soundcloud.com",
   ],

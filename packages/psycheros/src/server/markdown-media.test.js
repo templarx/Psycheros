@@ -9,6 +9,8 @@ const YT_RE =
   /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
 const VIMEO_RE =
   /(?:vimeo\.com\/(?:video\/)?|player\.vimeo\.com\/video\/)(\d+)/;
+const REDGIFS_RE =
+  /(?:www\.)?redgifs\.com\/(?:watch\/|ifr\/|embed\/)?([a-z0-9]{4,40})/i;
 const IMAGE_DOMAINS =
   /(?:^|\.)(imgur\.com|i\.imgur\.com|gyazo\.com|i\.redd\.it|preview\.redd\.it|wikimedia\.org|wikipedia\.org|githubusercontent\.com|cloudfront\.net|cdn\.|images\.|pbs\.twimg\.com|media\.tenor\.com|giphy\.com|media\d*\.giphy\.com|pinimg\.com|unsplash\.com|pexels\.com)$/i;
 
@@ -43,12 +45,18 @@ function vimeoId(href) {
   if (!isAbsoluteHttpUrl(href)) return null;
   const m = href.match(VIMEO_RE); return m ? m[1] : null;
 }
+function redgifsId(href) {
+  if (!isAbsoluteHttpUrl(href)) return null;
+  const m = href.match(REDGIFS_RE); return m ? m[1] : null;
+}
 
 function urlToEmbed(href) {
   const yid = youtubeId(href);
   if (yid) return `<div class="chat-media chat-media-youtube" data-original-src="${href}"><iframe src="https://www.youtube-nocookie.com/embed/${yid}"></iframe></div>`;
   const vid = vimeoId(href);
   if (vid) return `<div class="chat-media chat-media-vimeo" data-original-src="${href}"><iframe src="https://player.vimeo.com/video/${vid}"></iframe></div>`;
+  const rgid = redgifsId(href);
+  if (rgid) return `<div class="chat-media chat-media-redgifs" data-original-src="${href}"><iframe src="https://www.redgifs.com/ifr/${rgid}"></iframe></div>`;
   if (isVideoUrl(href)) return `<div class="chat-media chat-media-video" data-original-src="${href}"><video src="${href}" controls></video></div>`;
   if (isAudioUrl(href)) return `<div class="chat-media chat-media-audio" data-original-src="${href}"><audio src="${href}" controls></audio></div>`;
   if (isImageUrl(href)) return `![image](${href})`;
@@ -133,6 +141,12 @@ const t4 = 'Look https://vimeo.com/123456789';
 const r4 = preprocessMediaUrls(t4);
 contains('vimeo → iframe', r4, 'chat-media-vimeo');
 contains('vimeo embed src', r4, 'player.vimeo.com/video/123456789');
+
+// Redgifs
+const t4b = 'Check this https://www.redgifs.com/watch/instructiveradianttamarin lol';
+const r4b = preprocessMediaUrls(t4b);
+contains('redgifs → iframe', r4b, 'chat-media-redgifs');
+contains('redgifs embed src', r4b, 'redgifs.com/ifr/instructiveradianttamarin');
 
 // Video file
 const t5 = 'Demo: https://example.com/clip.mp4';

@@ -38,6 +38,14 @@
   /** Pattern that pulls a Vimeo numeric id. */
   const VIMEO_RE = /(?:vimeo\.com\/(?:video\/)?|player\.vimeo\.com\/video\/)(\d+)/;
 
+  /**
+   * Pattern that pulls a Redgifs id from any common Redgifs URL form.
+   * Redgifs replaced Gfycat for adult-content-safe short videos. Watch
+   * URLs are https://www.redgifs.com/watch/<id>; the embed iframe lives at
+   * https://www.redgifs.com/ifr/<id>. Ids are 8-32 lowercase alphanumerics.
+   */
+  const REDGIFS_RE = /(?:www\.)?redgifs\.com\/(?:watch\/|ifr\/|embed\/)?([a-z0-9]{4,40})/i;
+
   /** Domains that almost always serve images regardless of extension. */
   const IMAGE_DOMAINS = /(?:^|\.)(imgur\.com|i\.imgur\.com|gyazo\.com|i\.redd\.it|preview\.redd\.it|wikimedia\.org|wikipedia\.org|githubusercontent\.com|cloudfront\.net|cdn\.|images\.|pbs\.twimg\.com|media\.tenor\.com|giphy\.com|media\d*\.giphy\.com|pinimg\.com|unsplash\.com|pexels\.com)$/i;
 
@@ -88,6 +96,13 @@
   function vimeoId(href) {
     if (!isAbsoluteHttpUrl(href)) return null;
     const m = href.match(VIMEO_RE);
+    return m ? m[1] : null;
+  }
+
+  /** Extract Redgifs id or null. */
+  function redgifsId(href) {
+    if (!isAbsoluteHttpUrl(href)) return null;
+    const m = href.match(REDGIFS_RE);
     return m ? m[1] : null;
   }
 
@@ -147,6 +162,28 @@
     iframe.setAttribute("allowfullscreen", "");
     iframe.setAttribute("frameborder", "0");
     iframe.setAttribute("title", "Vimeo video");
+    iframe.loading = "lazy";
+    wrap.appendChild(iframe);
+    return wrap;
+  }
+
+  /**
+   * Build a Redgifs iframe embed. Redgifs provides a stable embed URL at
+   * https://www.redgifs.com/ifr/<id> that wraps the GIF/MP4 player without
+   * requiring API keys. Same shape as the YouTube/Vimeo embeds (16:9).
+   */
+  function buildRedgifs(id, originalHref) {
+    const wrap = document.createElement("div");
+    wrap.className = "chat-media chat-media-redgifs";
+    wrap.dataset.mediaEmbedded = "1";
+    wrap.dataset.originalSrc = originalHref;
+    const iframe = document.createElement("iframe");
+    iframe.src = "https://www.redgifs.com/ifr/" + encodeURIComponent(id);
+    iframe.setAttribute("allow", "autoplay; fullscreen; picture-in-picture");
+    iframe.setAttribute("allowfullscreen", "");
+    iframe.setAttribute("frameborder", "0");
+    iframe.setAttribute("title", "Redgifs video");
+    iframe.referrerPolicy = "no-referrer";
     iframe.loading = "lazy";
     wrap.appendChild(iframe);
     return wrap;
@@ -260,12 +297,17 @@
         const vimeoMatch = vimeoId(href);
         if (vimeoMatch) {
           replacement = buildVimeo(vimeoMatch, href);
-        } else if (isVideoUrl(href)) {
-          replacement = buildVideo(href);
-        } else if (isAudioUrl(href)) {
-          replacement = buildAudio(href);
-        } else if (isImageUrl(href)) {
-          replacement = buildImage(href, a.textContent || "");
+        } else {
+          const rgId = redgifsId(href);
+          if (rgId) {
+            replacement = buildRedgifs(rgId, href);
+          } else if (isVideoUrl(href)) {
+            replacement = buildVideo(href);
+          } else if (isAudioUrl(href)) {
+            replacement = buildAudio(href);
+          } else if (isImageUrl(href)) {
+            replacement = buildImage(href, a.textContent || "");
+          }
         }
       }
       if (replacement) {
@@ -335,5 +377,6 @@
     isAudioUrl: isAudioUrl,
     youtubeId: youtubeId,
     vimeoId: vimeoId,
+    redgifsId: redgifsId,
   };
 })(typeof window !== "undefined" ? window : globalThis);

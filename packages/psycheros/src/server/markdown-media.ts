@@ -29,6 +29,11 @@ const YT_RE =
   /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
 const VIMEO_RE =
   /(?:vimeo\.com\/(?:video\/)?|player\.vimeo\.com\/video\/)(\d+)/;
+// Redgifs replaces Gfycat for adult-content-safe short videos. Watch URL is
+// https://www.redgifs.com/watch/<id>; the embed iframe lives at
+// https://www.redgifs.com/ifr/<id>. Ids are 4-40 lowercase alphanumerics.
+const REDGIFS_RE =
+  /(?:www\.)?redgifs\.com\/(?:watch\/|ifr\/|embed\/)?([a-z0-9]{4,40})/i;
 const IMAGE_DOMAINS =
   /(?:^|\.)(imgur\.com|i\.imgur\.com|gyazo\.com|i\.redd\.it|preview\.redd\.it|wikimedia\.org|wikipedia\.org|githubusercontent\.com|cloudfront\.net|cdn\.|images\.|pbs\.twimg\.com|media\.tenor\.com|giphy\.com|media\d*\.giphy\.com|pinimg\.com|unsplash\.com|pexels\.com)$/i;
 
@@ -92,6 +97,12 @@ function vimeoId(href: string): string | null {
   return m ? m[1] : null;
 }
 
+function redgifsId(href: string): string | null {
+  if (!isAbsoluteHttpUrl(href)) return null;
+  const m = href.match(REDGIFS_RE);
+  return m ? m[1] : null;
+}
+
 /**
  * Build the embed HTML for a YouTube URL.
  */
@@ -112,6 +123,17 @@ function vimeoEmbed(id: string, originalHref: string): string {
   return (
     `<div class="chat-media chat-media-vimeo" data-media-embedded="1" data-original-src="${escapeAttr(originalHref)}">` +
     `<iframe src="${escapeAttr(src)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen frameborder="0" title="Vimeo video" loading="lazy"></iframe>` +
+    `</div>`
+  );
+}
+
+function redgifsEmbed(id: string, originalHref: string): string {
+  // Redgifs provides a stable /ifr/<id> endpoint that wraps the player.
+  // Same 16:9 shape as YouTube/Vimeo. No API key required.
+  const src = "https://www.redgifs.com/ifr/" + encodeURIComponent(id);
+  return (
+    `<div class="chat-media chat-media-redgifs" data-media-embedded="1" data-original-src="${escapeAttr(originalHref)}">` +
+    `<iframe src="${escapeAttr(src)}" allow="autoplay; fullscreen; picture-in-picture" allowfullscreen frameborder="0" title="Redgifs video" referrerpolicy="no-referrer" loading="lazy"></iframe>` +
     `</div>`
   );
 }
@@ -144,6 +166,8 @@ function urlToEmbed(href: string): string {
   if (ytId) return youTubeEmbed(ytId, href);
   const vimeoMatch = vimeoId(href);
   if (vimeoMatch) return vimeoEmbed(vimeoMatch, href);
+  const rgId = redgifsId(href);
+  if (rgId) return redgifsEmbed(rgId, href);
   if (isVideoUrl(href)) return videoEmbed(href);
   if (isAudioUrl(href)) return audioEmbed(href);
   if (isImageUrl(href)) return `![image](${href})`;
