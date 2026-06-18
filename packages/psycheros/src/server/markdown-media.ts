@@ -22,7 +22,8 @@
 
 const IMAGE_EXT =
   /\.(jpe?g|png|gif|webp|svg|svgz|bmp|avif|heic|heif|tiff?|ico)(?:\?|#|$)/i;
-const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv)(?:\?|#|$)/i;
+// .gifv: Imgur's video format (MP4/H.264 in a .gifv container).
+const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv|gifv)(?:\?|#|$)/i;
 const AUDIO_EXT = /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)(?:\?|#|$)/i;
 const YT_RE =
   /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
@@ -55,7 +56,11 @@ function escapeHtml(s: string): string {
 function isImageUrl(href: string): boolean {
   if (!isAbsoluteHttpUrl(href)) return false;
   const path = href.split("?")[0].split("#")[0];
+  // Some CDNs put the extension at the very end of the URL, AFTER the query
+  // string (e.g. signed URLs like https://cdn.example.com/v?id=1&t=2.mp4).
+  // Test BOTH the path-stripped form AND the full URL.
   if (IMAGE_EXT.test(path)) return true;
+  if (IMAGE_EXT.test(href)) return true;
   try {
     const host = new URL(href).hostname.toLowerCase();
     if (IMAGE_DOMAINS.test(host)) return true;
@@ -66,13 +71,13 @@ function isImageUrl(href: string): boolean {
 function isVideoUrl(href: string): boolean {
   if (!isAbsoluteHttpUrl(href)) return false;
   const path = href.split("?")[0].split("#")[0];
-  return VIDEO_EXT.test(path);
+  return VIDEO_EXT.test(path) || VIDEO_EXT.test(href);
 }
 
 function isAudioUrl(href: string): boolean {
   if (!isAbsoluteHttpUrl(href)) return false;
   const path = href.split("?")[0].split("#")[0];
-  return AUDIO_EXT.test(path);
+  return AUDIO_EXT.test(path) || AUDIO_EXT.test(href);
 }
 
 function youtubeId(href: string): string | null {

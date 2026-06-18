@@ -25,7 +25,9 @@
   const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|svgz|bmp|avif|heic|heif|tiff?|ico)(?:\?|#|$)/i;
 
   /** Common video extensions. */
-  const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv)(?:\?|#|$)/i;
+  // .gifv: Imgur's video format (MP4/H.264 in a .gifv container). Browsers
+  // can't render it as an image, so we treat it as a video.
+  const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv|gifv)(?:\?|#|$)/i;
 
   /** Common audio extensions. */
   const AUDIO_EXT = /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)(?:\?|#|$)/i;
@@ -48,9 +50,12 @@
   /** Returns true if this URL points to an image (by extension or known host). */
   function isImageUrl(href) {
     if (!isAbsoluteHttpUrl(href)) return false;
-    // Strip query/hash for extension matching
+    // Some CDNs put the extension at the very end of the URL, AFTER a query
+    // string (e.g. signed URLs like https://cdn.example.com/v?id=1&t=2.mp4).
+    // Test BOTH the path-stripped form AND the full URL.
     const path = href.split("?")[0].split("#")[0];
     if (IMAGE_EXT.test(path)) return true;
+    if (IMAGE_EXT.test(href)) return true;
     try {
       const host = new URL(href).hostname.toLowerCase();
       if (IMAGE_DOMAINS.test(host)) return true;
@@ -62,14 +67,14 @@
   function isVideoUrl(href) {
     if (!isAbsoluteHttpUrl(href)) return false;
     const path = href.split("?")[0].split("#")[0];
-    return VIDEO_EXT.test(path);
+    return VIDEO_EXT.test(path) || VIDEO_EXT.test(href);
   }
 
   /** Returns true if this URL points to an audio file. */
   function isAudioUrl(href) {
     if (!isAbsoluteHttpUrl(href)) return false;
     const path = href.split("?")[0].split("#")[0];
-    return AUDIO_EXT.test(path);
+    return AUDIO_EXT.test(path) || AUDIO_EXT.test(href);
   }
 
   /** Extract YouTube id or null. */

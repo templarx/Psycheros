@@ -101,6 +101,7 @@ console.log('-- URL detection --');
 check('isImageUrl jpg', M.isImageUrl('https://example.com/cat.jpg'), true);
 check('isImageUrl png', M.isImageUrl('https://example.com/x.png'), true);
 check('isImageUrl gif', M.isImageUrl('https://example.com/x.gif'), true);
+check('isImageUrl gif with query', M.isImageUrl('https://example.com/x.gif?cache=1'), true);
 check('isImageUrl webp', M.isImageUrl('https://example.com/x.webp'), true);
 check('isImageUrl svg', M.isImageUrl('https://example.com/x.svg'), true);
 check('isImageUrl query', M.isImageUrl('https://example.com/x.jpg?v=1'), true);
@@ -112,6 +113,8 @@ check('isImageUrl non-http', M.isImageUrl('ftp://example.com/x.jpg'), false);
 check('isVideoUrl mp4', M.isVideoUrl('https://example.com/clip.mp4'), true);
 check('isVideoUrl webm', M.isVideoUrl('https://example.com/clip.webm'), true);
 check('isVideoUrl mov', M.isVideoUrl('https://example.com/clip.mov'), true);
+check('isVideoUrl gifv (imgur)', M.isVideoUrl('https://i.imgur.com/abc.gifv'), true);
+check('isVideoUrl mp4 after query (signed URL)', M.isVideoUrl('https://cdn.example.com/v?id=1&t=2.mp4'), true);
 check('isVideoUrl jpg', M.isVideoUrl('https://example.com/cat.jpg'), false);
 
 check('isAudioUrl mp3', M.isAudioUrl('https://example.com/song.mp3'), true);

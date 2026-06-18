@@ -3,7 +3,7 @@
 
 const IMAGE_EXT =
   /\.(jpe?g|png|gif|webp|svg|svgz|bmp|avif|heic|heif|tiff?|ico)(?:\?|#|$)/i;
-const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv)(?:\?|#|$)/i;
+const VIDEO_EXT = /\.(mp4|webm|ogg|ogv|mov|m4v|mkv|gifv)(?:\?|#|$)/i;
 const AUDIO_EXT = /\.(mp3|wav|ogg|oga|flac|m4a|aac|opus)(?:\?|#|$)/i;
 const YT_RE =
   /(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|v\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
@@ -18,6 +18,7 @@ function isImageUrl(href) {
   if (!isAbsoluteHttpUrl(href)) return false;
   const path = href.split("?")[0].split("#")[0];
   if (IMAGE_EXT.test(path)) return true;
+  if (IMAGE_EXT.test(href)) return true;
   try {
     const host = new URL(href).hostname.toLowerCase();
     if (IMAGE_DOMAINS.test(host)) return true;
@@ -26,11 +27,13 @@ function isImageUrl(href) {
 }
 function isVideoUrl(href) {
   if (!isAbsoluteHttpUrl(href)) return false;
-  return VIDEO_EXT.test(href.split("?")[0].split("#")[0]);
+  const path = href.split("?")[0].split("#")[0];
+  return VIDEO_EXT.test(path) || VIDEO_EXT.test(href);
 }
 function isAudioUrl(href) {
   if (!isAbsoluteHttpUrl(href)) return false;
-  return AUDIO_EXT.test(href.split("?")[0].split("#")[0]);
+  const path = href.split("?")[0].split("#")[0];
+  return AUDIO_EXT.test(path) || AUDIO_EXT.test(href);
 }
 function youtubeId(href) {
   if (!isAbsoluteHttpUrl(href)) return null;
@@ -136,6 +139,18 @@ const t5 = 'Demo: https://example.com/clip.mp4';
 const r5 = preprocessMediaUrls(t5);
 contains('video file → <video>', r5, '<video src="https://example.com/clip.mp4"');
 contains('video class', r5, 'chat-media-video');
+
+// Imgur .gifv → <video> (not <img>; browsers can't render .gifv)
+const t5b = 'Look https://i.imgur.com/abc.gifv now';
+const r5b = preprocessMediaUrls(t5b);
+contains('imgur .gifv → video', r5b, 'chat-media-video');
+notContains('imgur .gifv not img', r5b, 'chat-media-image');
+
+// MP4 after query string (signed CDN URL)
+const t5c = 'Watch https://cdn.example.com/v?id=1&t=2.mp4 here';
+const r5c = preprocessMediaUrls(t5c);
+contains('mp4 after query → video', r5c, 'chat-media-video');
+notContains('mp4 after query not other', r5c, '![image]');
 
 // Audio file
 const t6 = 'Listen: https://example.com/song.mp3';
