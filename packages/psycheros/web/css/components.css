@@ -749,57 +749,33 @@ Input Area
   height: 16px;
 }
 
-.skill-btn .skill-btn-icon-busy,
-.skill-btn .skill-btn-icon-ready {
-  display: none;
+/* Hide the busy icon by default; the loading state rule below brings
+   it back. The base rule is `!important` to defeat any shared-class
+   rule from the .skill-btn-icon block above. */
+.skill-btn .skill-btn-icon-busy {
+  display: none !important;
 }
 
-/* Idle = sparkles icon. Loading = animated dots (same phosphor-pulse
-   pattern the main chat uses during streaming). Ready = X icon to
-   discard the visible draft. */
-.skill-btn[data-state="idle"] .skill-btn-icon-idle {
+/* Idle = sparkles icon (default). Loading = animated dots. */
+.skill-btn[data-state="idle"] .skill-btn-icon-idle,
+.skill-btn[data-state="loading"] .skill-btn-icon-idle {
   display: inline-flex;
-}
-
-.skill-btn[data-state="loading"] .skill-btn-icon-idle,
-.skill-btn[data-state="loading"] .skill-btn-icon-ready {
-  display: none;
 }
 
 .skill-btn[data-state="loading"] .skill-btn-icon-busy {
-  display: inline-flex;
+  display: inline-flex !important;
   color: var(--c-accent, #a855f7);
-}
-
-.skill-btn[data-state="ready"] .skill-btn-icon-idle,
-.skill-btn[data-state="ready"] .skill-btn-icon-busy {
-  display: none;
-}
-
-.skill-btn[data-state="ready"] .skill-btn-icon-ready {
-  display: inline-flex;
-  color: var(--c-warning, #f59e0b);
 }
 
 .skill-btn[data-state="loading"] {
   border-color: var(--c-accent, #a855f7);
   background: color-mix(in srgb, var(--c-accent, #a855f7) 8%, transparent);
+  cursor: progress;
 }
 
-.skill-btn[data-state="ready"] {
-  border-color: var(--c-warning, #f59e0b);
-  background: color-mix(in srgb, var(--c-warning, #f59e0b) 8%, transparent);
-}
-
-.skill-btn[data-state="ready"]:hover {
-  border-color: var(--c-error, #c33);
-  color: var(--c-error, #c33);
-  background: color-mix(in srgb, var(--c-error, #c33) 6%, transparent);
-}
-
-/* The animated "..." dots inside the busy icon. Smaller than the main
-   chat streaming dots so they fit inside the 32px button, but otherwise
-   uses the same `phosphor-pulse` keyframes / timing. */
+/* The animated "..." dots inside the busy icon. Same `phosphor-pulse`
+   keyframes the main chat uses during streaming, just scaled down to
+   fit inside a 32px button. */
 .skill-btn-dots.streaming {
   display: inline-flex;
   gap: 3px;
@@ -827,8 +803,54 @@ Input Area
   animation-delay: -0.16s;
 }
 
+/* Discard button — separate from Suggest, sits to the right of it.
+   Hidden by default; shown when the Suggest button transitions to
+   the "ready" state. */
+.skill-discard-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--c-border);
+  border-radius: 50%;
+  color: var(--c-warning, #f59e0b);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.skill-discard-btn[data-visible="true"] {
+  display: inline-flex;
+  animation: skill-discard-in 0.2s ease-out;
+}
+
+.skill-discard-btn:hover {
+  color: var(--c-error, #c33);
+  border-color: var(--c-error, #c33);
+  background: color-mix(in srgb, var(--c-error, #c33) 6%, transparent);
+}
+
+.skill-discard-btn:active {
+  transform: scale(0.92);
+}
+
+@keyframes skill-discard-in {
+  from {
+    opacity: 0;
+    transform: scale(0.6);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 /* Draft indicator — appears below the skills bar when an AI-generated
-   draft is in the input box. Subtle styling so it doesn't distract. */
+   draft is in the input box. Subtle styling so it doesn't distract.
+   Discard control now lives in the skills bar (right of the Suggest
+   button), so this is just a status line. */
 .skill-draft-bar {
   display: flex;
   align-items: center;
@@ -849,32 +871,6 @@ Input Area
 
 .skill-draft-hint {
   color: var(--c-fg-muted);
-}
-
-.skill-draft-discard {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  background: transparent;
-  border: 1px solid var(--c-border);
-  color: var(--c-fg-muted);
-  cursor: pointer;
-  padding: 0;
-  border-radius: 50%;
-  margin-left: auto;
-  transition: all 0.15s ease;
-}
-
-.skill-draft-discard:hover {
-  color: var(--c-error, #c33);
-  border-color: var(--c-error, #c33);
-  background: color-mix(in srgb, var(--c-error, #c33) 6%, transparent);
-}
-
-.skill-draft-discard:active {
-  transform: scale(0.92);
 }
 
 .input-container {

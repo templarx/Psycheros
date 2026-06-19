@@ -16,11 +16,12 @@
 // that don't touch the daemon version (so we can force a SW cache eviction
 // without bumping the public semver). Bump it whenever a CSS/JS change
 // needs to invalidate cached assets on user browsers.
-const CACHE_NAME = "psycheros-offline-__VERSION__-ui2";
+const CACHE_NAME = "psycheros-offline-__VERSION__-ui3";
 const STATIC_ASSETS = [
   "/",
-  "/css/main.css",
-  "/js/psycheros.js",
+  "/css/main.css?v=ui3",
+  "/js/psycheros.js?v=ui3",
+  "/js/media-embed.js?v=ui3",
   "/js/theme.js",
   "/lib/htmx.min.js",
   "/lib/htmx-sse.js",

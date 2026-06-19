@@ -1072,12 +1072,14 @@ function setDraftBarVisible(visible) {
  * static, only the visible glyph changes.
  *
  * States:
- *   "idle"    — initial; sparkle icon
- *   "loading" — request in flight; animated dots; input is locked
+ *   "idle"    — initial; sparkle icon, click starts a request
+ *   "loading" — request in flight; animated dots, input is locked
  *               (disabled + cursor:progress) so the user can't type
  *               into it during generation. Clicking again cancels.
- *   "ready"   — a draft has been inserted into the input box; X icon;
- *               clicking now removes the draft.
+ *
+ * The discard (X) button is a SEPARATE element to the right of Suggest.
+ * It becomes visible when a draft lands in the input and is shown via
+ * `setDiscardVisible()` — see below.
  */
 function setSkillState(state) {
   const btn = document.getElementById('skill-suggest');
@@ -1097,14 +1099,27 @@ function setSkillState(state) {
 }
 
 /**
+ * Show / hide the discard button (next to Suggest). The button uses
+ * `data-visible="true|false"` so CSS can animate the in/out transition.
+ */
+function setDiscardVisible(visible) {
+  const btn = document.getElementById('skill-discard');
+  if (btn) btn.dataset.visible = visible ? 'true' : 'false';
+}
+
+/**
  * Trigger the AI-suggest skill. State machine:
- *   idle    → click → loading → success → ready | cancel click → idle | error → idle
+ *   idle    → click → loading → success → idle (discard button visible) | cancel click → idle | error → idle
  *   loading → click → cancel the in-flight request, back to idle
- *   ready   → click → discard the draft, back to idle
  *
  * The input box is locked while loading so the user can't race with the
  * generation. Stale responses (user navigated to a different conversation
  * mid-flight) are dropped silently.
+ *
+ * On success, the Suggest button returns to idle (the dots stop animating
+ * and the sparkle reappears), the input is unlocked, and the separate
+ * #skill-discard button becomes visible — that's how the user knows a
+ * draft is in the input and how they remove it.
  */
 async function requestSuggestionDraft() {
   const input = document.getElementById('message-input');
@@ -1124,7 +1139,8 @@ async function requestSuggestionDraft() {
     return;
   }
 
-  // If a draft is currently visible (not generating), clicking discards it.
+  // If a draft is currently in the input (discard button visible),
+  // clicking Suggest again discards it via the same discard handler.
   if (activeDraftSuggestion !== null) {
     console.log('[Skill] Suggest: discarding visible draft');
     discardSuggestionDraft();
@@ -1210,12 +1226,12 @@ async function requestSuggestionDraft() {
     input.value = existing + separator + draft;
     activeDraftSuggestion = draft;
 
-    // Show the draft indicator bar.
+    // Show the draft status bar and the separate discard button.
     setDraftBarVisible(true);
+    setDiscardVisible(true);
 
-    // Flip the button into "ready" mode (Discard label). The input is
-    // unlocked because the user can now edit the draft.
-    setSkillState('ready');
+    // Return Suggest to idle — input is unlocked, user can edit the draft.
+    setSkillState('idle');
 
     // Focus + place cursor at end so the user can edit immediately.
     autoResize(input);
@@ -1236,9 +1252,9 @@ async function requestSuggestionDraft() {
     );
   } finally {
     suggestionAbortController = null;
-    // Only reset to idle if we didn't transition to ready. If a draft
-    // was inserted, setSkillState('ready') ran in the try block and we
-    // don't want to clobber it.
+    // Ensure Suggest is back to idle. The success path also calls
+    // setSkillState('idle') so this is a no-op there; this catches the
+    // error / cancel paths.
     if (btn.dataset.state === 'loading') {
       setSkillState('idle');
     }
@@ -1264,6 +1280,7 @@ function discardSuggestionDraft() {
   }
   activeDraftSuggestion = null;
   setDraftBarVisible(false);
+  setDiscardVisible(false);
   setSkillState('idle');
 }
 
@@ -1275,6 +1292,7 @@ function discardSuggestionDraft() {
 function clearActiveDraft() {
   activeDraftSuggestion = null;
   setDraftBarVisible(false);
+  setDiscardVisible(false);
 }
 
 // (Skill buttons use inline `onclick="Psycheros.requestSuggestionDraft()"`

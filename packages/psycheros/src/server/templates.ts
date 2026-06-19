@@ -261,7 +261,7 @@ export function renderAppShell(): string {
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Psycheros</title>
-  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/main.css?v=ui3">
   ${getAccentColorOverride()}
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
@@ -271,7 +271,7 @@ export function renderAppShell(): string {
   <script src="/lib/htmx-sse.js"></script>
   <script src="/lib/marked.min.js"></script>
   <script src="/lib/dompurify.min.js"></script>
-  <script src="/js/media-embed.js"></script>
+  <script src="/js/media-embed.js?v=ui3"></script>
 </head>
 <body>
   <div class="bg-layer"></div>
@@ -362,7 +362,7 @@ export function renderAppShell(): string {
     }).catch(() => {});
   })();
   </script>
-  <script type="module" src="/js/psycheros.js"></script>
+  <script type="module" src="/js/psycheros.js?v=ui3"></script>
 </body>
 </html>`;
 }
@@ -2017,25 +2017,21 @@ export function renderInputArea(): string {
           <span></span><span></span><span></span>
         </span>
       </span>
-      <span class="skill-btn-icon skill-btn-icon-ready" aria-hidden="true">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M6 6l12 12M18 6L6 18"/>
-        </svg>
-      </span>
       <span class="skill-btn-label">Suggest</span>
+    </button>
+    <button type="button" class="skill-discard-btn" id="skill-discard"
+            data-visible="false"
+            title="Discard the AI draft"
+            aria-label="Discard the AI draft"
+            onclick="Psycheros.discardSuggestionDraft()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
     </button>
   </div>
   <div class="skill-draft-bar" id="skill-draft-bar" style="display:none;">
     <span class="skill-draft-label">AI draft</span>
     <span class="skill-draft-hint">— edit and send</span>
-    <button type="button" class="skill-draft-discard" id="skill-draft-discard"
-            title="Discard the AI draft"
-            aria-label="Discard the AI draft"
-            onclick="Psycheros.discardSuggestionDraft()">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M6 6l12 12M18 6L6 18"/>
-      </svg>
-    </button>
   </div>
   <div class="input-container">
     <label class="attach-btn" title="Attach image" style="position:relative;overflow:hidden;cursor:pointer;">
