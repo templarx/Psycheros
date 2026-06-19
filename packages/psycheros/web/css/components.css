@@ -685,8 +685,9 @@ Input Area
 }
 
 /* Skills bar — sits just above the input row, gives the user one-click
-   access to AI-powered draft helpers. Designed to be extensible — add
-   more .skill-btn elements as more skills are added. */
+   access to AI-powered draft helpers. Icon-only buttons with tooltips;
+   the data-state attribute swaps which icon is visible. Designed to be
+   extensible — add more .skill-btn elements as more skills are added. */
 .skills-bar {
   display: flex;
   align-items: center;
@@ -698,17 +699,16 @@ Input Area
 .skill-btn {
   display: inline-flex;
   align-items: center;
-  gap: var(--sp-1);
-  padding: 4px 10px;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   background: var(--c-bg-raised, transparent);
   border: 1px solid var(--c-border);
   border-radius: var(--radius-sm);
   color: var(--c-fg-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
   cursor: pointer;
   transition: all 0.15s ease;
-  min-width: 90px; /* prevents width jump when label changes */
 }
 
 .skill-btn:hover {
@@ -726,32 +726,57 @@ Input Area
   cursor: not-allowed;
 }
 
-/* Three states share the same button — we swap visibility of the
-   icon + label pair via the data-state attribute on the button. */
+/* The button is icon-only, so we only swap the icon per state.
+   `.skill-btn-label` is kept as an `aria-label` source — it stays
+   visually hidden but readable by screen readers. */
+.skill-btn .skill-btn-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skill-btn .skill-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
 .skill-btn .skill-btn-icon-busy,
-.skill-btn .skill-btn-label-busy,
-.skill-btn .skill-btn-label-cancel {
+.skill-btn .skill-btn-icon-ready {
   display: none;
+}
+
+/* Idle = sparkles icon. Loading = animated dots (same phosphor-pulse
+   pattern the main chat uses during streaming). Ready = X icon to
+   discard the visible draft. */
+.skill-btn[data-state="idle"] .skill-btn-icon-idle {
+  display: inline-flex;
 }
 
 .skill-btn[data-state="loading"] .skill-btn-icon-idle,
-.skill-btn[data-state="loading"] .skill-btn-label-idle {
+.skill-btn[data-state="loading"] .skill-btn-icon-ready {
   display: none;
 }
 
-.skill-btn[data-state="loading"] .skill-btn-icon-busy,
-.skill-btn[data-state="loading"] .skill-btn-label-busy {
+.skill-btn[data-state="loading"] .skill-btn-icon-busy {
   display: inline-flex;
   color: var(--c-accent, #a855f7);
 }
 
 .skill-btn[data-state="ready"] .skill-btn-icon-idle,
-.skill-btn[data-state="ready"] .skill-btn-label-idle {
+.skill-btn[data-state="ready"] .skill-btn-icon-busy {
   display: none;
 }
 
-.skill-btn[data-state="ready"] .skill-btn-icon-busy,
-.skill-btn[data-state="ready"] .skill-btn-label-cancel {
+.skill-btn[data-state="ready"] .skill-btn-icon-ready {
   display: inline-flex;
   color: var(--c-warning, #f59e0b);
 }
@@ -766,24 +791,40 @@ Input Area
   background: color-mix(in srgb, var(--c-warning, #f59e0b) 8%, transparent);
 }
 
-.skill-btn-spinner {
-  animation: skill-spin 0.9s linear infinite;
+.skill-btn[data-state="ready"]:hover {
+  border-color: var(--c-error, #c33);
+  color: var(--c-error, #c33);
+  background: color-mix(in srgb, var(--c-error, #c33) 6%, transparent);
 }
 
-@keyframes skill-spin {
-  to { transform: rotate(360deg); }
+/* The animated "..." dots inside the busy icon. Smaller than the main
+   chat streaming dots so they fit inside the 32px button, but otherwise
+   uses the same `phosphor-pulse` keyframes / timing. */
+.skill-btn-dots.streaming {
+  display: inline-flex;
+  gap: 3px;
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
 }
 
-.skill-btn-label {
-  font-weight: var(--font-weight-medium);
+.skill-btn-dots.streaming span {
+  width: 4px;
+  height: 4px;
+  background-color: currentColor;
+  border-radius: 50%;
+  animation: phosphor-pulse 1.2s infinite ease-in-out both;
+  box-shadow: 0 0 4px currentColor;
 }
 
-.skills-bar-hint {
-  color: var(--c-fg-muted);
-  font-size: var(--font-size-xs);
-  font-family: var(--font-mono);
-  opacity: 0.6;
-  margin-left: auto;
+.skill-btn-dots.streaming span:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.skill-btn-dots.streaming span:nth-child(2) {
+  animation-delay: -0.16s;
 }
 
 /* Draft indicator — appears below the skills bar when an AI-generated
@@ -793,7 +834,7 @@ Input Area
   align-items: center;
   gap: var(--sp-2);
   margin-bottom: var(--sp-2);
-  padding: 6px 10px;
+  padding: 4px 10px;
   background: color-mix(in srgb, var(--c-accent-muted, #7e22ce) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--c-accent-muted, #7e22ce) 30%, transparent);
   border-radius: var(--radius-sm);
@@ -808,25 +849,32 @@ Input Area
 
 .skill-draft-hint {
   color: var(--c-fg-muted);
-  flex: 1;
 }
 
 .skill-draft-discard {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
   background: transparent;
-  border: none;
+  border: 1px solid var(--c-border);
   color: var(--c-fg-muted);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
   cursor: pointer;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 2px;
+  padding: 0;
+  border-radius: 50%;
+  margin-left: auto;
+  transition: all 0.15s ease;
 }
 
 .skill-draft-discard:hover {
   color: var(--c-error, #c33);
+  border-color: var(--c-error, #c33);
+  background: color-mix(in srgb, var(--c-error, #c33) 6%, transparent);
+}
+
+.skill-draft-discard:active {
+  transform: scale(0.92);
 }
 
 .input-container {

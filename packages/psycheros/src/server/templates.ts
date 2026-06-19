@@ -2002,28 +2002,40 @@ export function renderInputArea(): string {
   <div class="skills-bar" id="skills-bar">
     <button type="button" class="skill-btn" id="skill-suggest" data-skill="suggest" data-state="idle"
             onclick="Psycheros.requestSuggestionDraft()"
-            title="Draft a message using the active AI (uses the last 5 messages as context). Shortcut: Ctrl+J.">
-      <span class="skill-btn-icon skill-btn-icon-idle">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4-6.2-4.5-6.2 4.5 2.4-7.4L2 9.4h7.6z"/>
+            title="Suggest a draft (uses last 5 messages as context). Shortcut: Ctrl+J.">
+      <span class="skill-btn-icon skill-btn-icon-idle" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+          <path d="M20 3v4"/>
+          <path d="M22 5h-4"/>
+          <path d="M4 17v2"/>
+          <path d="M5 18H3"/>
         </svg>
       </span>
-      <span class="skill-btn-icon skill-btn-icon-busy">
-        <svg class="skill-btn-spinner" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="9" stroke-opacity="0.25"/>
-          <path d="M21 12a9 9 0 0 1-9 9" stroke-linecap="round"/>
+      <span class="skill-btn-icon skill-btn-icon-busy" aria-hidden="true">
+        <span class="skill-btn-dots streaming" aria-label="Generating draft">
+          <span></span><span></span><span></span>
+        </span>
+      </span>
+      <span class="skill-btn-icon skill-btn-icon-ready" aria-hidden="true">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 6l12 12M18 6L6 18"/>
         </svg>
       </span>
-      <span class="skill-btn-label skill-btn-label-idle">Suggest</span>
-      <span class="skill-btn-label skill-btn-label-busy">Generating…</span>
-      <span class="skill-btn-label skill-btn-label-cancel">Discard</span>
+      <span class="skill-btn-label">Suggest</span>
     </button>
-    <span class="skills-bar-hint">AI skills</span>
   </div>
   <div class="skill-draft-bar" id="skill-draft-bar" style="display:none;">
-    <span class="skill-draft-label">Draft from AI:</span>
-    <span class="skill-draft-hint">edit and send, or</span>
-    <button type="button" class="skill-draft-discard" id="skill-draft-discard" title="Discard the AI draft" onclick="Psycheros.discardSuggestionDraft()">discard</button>
+    <span class="skill-draft-label">AI draft</span>
+    <span class="skill-draft-hint">— edit and send</span>
+    <button type="button" class="skill-draft-discard" id="skill-draft-discard"
+            title="Discard the AI draft"
+            aria-label="Discard the AI draft"
+            onclick="Psycheros.discardSuggestionDraft()">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 6l12 12M18 6L6 18"/>
+      </svg>
+    </button>
   </div>
   <div class="input-container">
     <label class="attach-btn" title="Attach image" style="position:relative;overflow:hidden;cursor:pointer;">

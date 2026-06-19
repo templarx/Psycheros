@@ -1067,16 +1067,17 @@ function setDraftBarVisible(visible) {
 }
 
 /**
- * Update the Suggest button's data-state (drives the CSS spinner / label
- * swap) and lock or unlock the input box.
+ * Update the Suggest button's data-state (drives the CSS icon swap) and
+ * lock or unlock the input box. Button is icon-only — the tooltip stays
+ * static, only the visible glyph changes.
  *
  * States:
- *   "idle"    — initial; star icon + "Suggest" label
- *   "loading" — request in flight; spinner + "Generating…" label; input
- *               is locked (disabled + cursor:progress) so the user can't
- *               type into it during generation
- *   "ready"   — a draft has been inserted into the input box; spinner +
- *               "Discard" label; clicking now removes the draft
+ *   "idle"    — initial; sparkle icon
+ *   "loading" — request in flight; animated dots; input is locked
+ *               (disabled + cursor:progress) so the user can't type
+ *               into it during generation. Clicking again cancels.
+ *   "ready"   — a draft has been inserted into the input box; X icon;
+ *               clicking now removes the draft.
  */
 function setSkillState(state) {
   const btn = document.getElementById('skill-suggest');

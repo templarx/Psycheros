@@ -11,7 +11,12 @@
 // released build owns a unique cache key and stale offline assets are evicted
 // on upgrade. Local file load (without going through the server route) will
 // see the literal placeholder, which is harmless — the SW still functions.
-const CACHE_NAME = "psycheros-offline-__VERSION__";
+//
+// `__UI_REVISION__` is the same idea but bumped manually for UI-only changes
+// that don't touch the daemon version (so we can force a SW cache eviction
+// without bumping the public semver). Bump it whenever a CSS/JS change
+// needs to invalidate cached assets on user browsers.
+const CACHE_NAME = "psycheros-offline-__VERSION__-ui2";
 const STATIC_ASSETS = [
   "/",
   "/css/main.css",
