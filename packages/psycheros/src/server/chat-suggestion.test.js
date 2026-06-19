@@ -1,23 +1,51 @@
 // Tests for the prompt-construction logic in handleChatSuggestion.
 // Replicates the relevant slice in plain JS so we can run under Node.
 
-const SYSTEM_PROMPT_TEMPLATE = (userName, entityName) =>
-  `You are helping ${userName} draft their next reply to ${entityName} in an ongoing chat. ` +
-  `Read the conversation below and write what ${userName} would naturally say next. ` +
+const SYSTEM_PROMPT_TEMPLATE = (userName, entityName, contextCount) =>
+  `You are helping ${userName} draft their next message in response to ` +
+  `${entityName} (the AI Bot). ` +
+  `Below are the last ${contextCount} exchanges from the conversation. ` +
+  `Each exchange shows what ${userName} said and what ${entityName} replied. ` +
+  `Write what ${userName} would naturally say NEXT, on their own behalf, ` +
+  `in response to the most recent ${entityName} reply. ` +
   `Constraints: ` +
   `(1) Output ONLY the message text — no preamble, no quotes, no "Here's a draft:", no role labels. ` +
-  `(2) Stay in character — match the tone, length, and vocabulary ${userName} has been using. ` +
+  `(2) Stay in character — match the tone, length, vocabulary, and style ${userName} has been using in the user messages shown above. ` +
   `(3) Keep it under 150 words unless the conversation clearly warrants more. ` +
-  `(4) If the previous message asked a question, ${userName}'s reply should answer it. ` +
-  `(5) Do not include tool calls, code fences, or markdown structure unless ${userName} has been using them. ` +
-  `(6) Write in the same language as the conversation.`;
+  `(4) The reply should respond to the LAST ${entityName} message (the most recent bot reply). ` +
+  `(5) If the last ${entityName} message asked a question, ${userName}'s reply should answer it. ` +
+  `(6) Do not include tool calls, code fences, or markdown structure unless ${userName} has been using them. ` +
+  `(7) Write in the same language as the conversation.`;
 
-// Replica of the prompt-building logic
-function buildSuggestionMessages(filteredMessages, userName, entityName) {
+// Replica of selectAssistantContext — picks the last `assistantCount`
+// assistant messages from a filtered history, each paired with the user
+// message that immediately preceded it.
+function selectAssistantContext(filtered, assistantCount) {
+  const result = [];
+  let picked = 0;
+
+  for (let i = filtered.length - 1; i >= 0 && picked < assistantCount; i--) {
+    const m = filtered[i];
+    if (m.role !== "assistant") continue;
+
+    result.unshift({ role: "assistant", content: String(m.content || "") });
+
+    if (i > 0 && filtered[i - 1].role === "user") {
+      result.unshift({ role: "user", content: String(filtered[i - 1].content || "") });
+    }
+    picked++;
+  }
+
+  return result;
+}
+
+// Replica of the prompt-building logic — receives the *selected* context
+// (already narrowed by selectAssistantContext) plus the user/entity names.
+function buildSuggestionMessages(contextMessages, userName, entityName, contextCount) {
   return [
-    { role: "system", content: SYSTEM_PROMPT_TEMPLATE(userName, entityName) },
-    ...filteredMessages.map((m) => ({ role: m.role, content: m.content })),
-    { role: "user", content: `Now write ${userName}'s next message in this conversation.` },
+    { role: "system", content: SYSTEM_PROMPT_TEMPLATE(userName, entityName, contextCount) },
+    ...contextMessages.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: `Now write ${userName}'s next message, responding to ${entityName}'s most recent reply.` },
   ];
 }
 
@@ -33,52 +61,145 @@ function check(label, actual, expected) {
   else { fail++; console.error(`  FAIL ${label}\n       got: ${JSON.stringify(actual)}`); }
 }
 
-console.log("-- chat-suggestion prompt construction --");
+console.log("-- selectAssistantContext: last N assistant + paired user --");
 
-// Empty history — should still produce a valid messages array with just the system + final user
-const m1 = buildSuggestionMessages([], "Alice", "Bot");
-check("empty history → 2 messages (system + final user)", m1.length, 2);
-check("empty history → first is system", m1[0].role, "system");
-check("empty history → system prompt names user", m1[0].content.includes("Alice"), true);
-check("empty history → system prompt names entity", m1[0].content.includes("Bot"), true);
-check("empty history → last is the final user prompt", m1[1].content, "Now write Alice's next message in this conversation.");
+// Empty history
+const empty = selectAssistantContext([], 5);
+check("empty history → empty context", empty.length, 0);
 
-// 3-message history — should produce 5 messages (system + 3 history + final user)
-const history = [
-  { role: "user", content: "Hey, what's up?" },
-  { role: "assistant", content: "Not much. Working on some code." },
-  { role: "user", content: "Cool. Want to grab coffee?" },
-];
-const m2 = buildSuggestionMessages(history, "Alice", "Bot");
-check("3-history → 5 messages total", m2.length, 5);
-check("3-history → system first", m2[0].role, "system");
-check("3-history → history verbatim", m2[1].content, "Hey, what's up?");
-check("3-history → assistant message preserved", m2[2].role, "assistant");
-check("3-history → last message from user", m2[3].content, "Cool. Want to grab coffee?");
-check("3-history → final user prompt last", m2[4].role, "user");
-check("3-history → final prompt uses user name", m2[4].content.includes("Alice"), true);
+// Only user messages (no assistant yet) — common when the user just sent a message
+const userOnly = selectAssistantContext(
+  [{ role: "user", content: "Hi bot" }],
+  5,
+);
+check("only user messages → empty context (no assistant to respond to)", userOnly.length, 0);
 
-// System messages in history should be filtered out (server-side responsibility,
-// but we test the input here)
+// Single exchange: 1 user + 1 assistant → context = [user, assistant]
+const onePair = selectAssistantContext(
+  [
+    { role: "user", content: "Hi" },
+    { role: "assistant", content: "Hello!" },
+  ],
+  5,
+);
+check("1 exchange → 2 messages", onePair.length, 2);
+check("1 exchange → starts with user", onePair[0].role, "user");
+check("1 exchange → user content preserved", onePair[0].content, "Hi");
+check("1 exchange → ends with assistant", onePair[1].role, "assistant");
+check("1 exchange → assistant content preserved", onePair[1].content, "Hello!");
+
+// Two exchanges (4 messages) with assistantCount=2 → both pairs included
+const twoExchanges = selectAssistantContext(
+  [
+    { role: "user", content: "First user" },
+    { role: "assistant", content: "First assistant" },
+    { role: "user", content: "Second user" },
+    { role: "assistant", content: "Second assistant" },
+  ],
+  2,
+);
+check("2 exchanges, count=2 → 4 messages (both pairs)", twoExchanges.length, 4);
+check("2 exchanges → starts with first user (chronological order)", twoExchanges[0].content, "First user");
+check("2 exchanges → first assistant follows", twoExchanges[1].content, "First assistant");
+check("2 exchanges → second user third", twoExchanges[2].content, "Second user");
+check("2 exchanges → last is second assistant (so draft responds to it)", twoExchanges[3].content, "Second assistant");
+check("2 exchanges → last role is assistant", twoExchanges[3].role, "assistant");
+
+// 2 exchanges but only ask for 1 most recent assistant → just the latest pair
+const justLatest = selectAssistantContext(
+  [
+    { role: "user", content: "First user" },
+    { role: "assistant", content: "First assistant" },
+    { role: "user", content: "Second user" },
+    { role: "assistant", content: "Second assistant" },
+  ],
+  1,
+);
+check("2 exchanges, count=1 → 2 messages (latest pair only)", justLatest.length, 2);
+check("2 exchanges, count=1 → starts with second user", justLatest[0].content, "Second user");
+check("2 exchanges, count=1 → ends with second assistant", justLatest[1].content, "Second assistant");
+
+// Many exchanges, count=5 → only the most recent 5 pairs included
+const manyExchanges = [];
+for (let i = 1; i <= 10; i++) {
+  manyExchanges.push({ role: "user", content: `user-${i}` });
+  manyExchanges.push({ role: "assistant", content: `assistant-${i}` });
+}
+const recentFive = selectAssistantContext(manyExchanges, 5);
+check("10 exchanges, count=5 → 10 messages (5 pairs)", recentFive.length, 10);
+check("recent 5 → first is user-6", recentFive[0].content, "user-6");
+check("recent 5 → second is assistant-6", recentFive[1].content, "assistant-6");
+check("recent 5 → last is assistant-10", recentFive[9].content, "assistant-10");
+
+// Conversation ending with a user message (rare but possible): the trailing
+// user message has no assistant reply yet, so it shouldn't appear in context
+const trailingUser = selectAssistantContext(
+  [
+    { role: "user", content: "First user" },
+    { role: "assistant", content: "First assistant" },
+    { role: "user", content: "Unanswered user" },
+  ],
+  5,
+);
+check("trailing user (no assistant reply) → only the prior pair", trailingUser.length, 2);
+check("trailing user → pair is [user, assistant]", trailingUser[0].content, "First user");
+check("trailing user → trailing user dropped", trailingUser.some((m) => m.content === "Unanswered user"), false);
+
+// System messages are filtered before this function is called (caller's job)
 const withSystem = [
-  { role: "system", content: "You are a helpful bot" },  // filtered by caller
+  { role: "system", content: "You are a helpful bot" },
   { role: "user", content: "Hi" },
   { role: "assistant", content: "Hello!" },
 ];
-const filtered = withSystem.filter((m) => m.role === "user" || m.role === "assistant");
-const m3 = buildSuggestionMessages(filtered, "Alice", "Bot");
-check("system messages are filtered before prompt", m3.length, 4); // 1 system + 2 hist + 1 final user
-check("system content not in prompt", m3.some((m) => m.content === "You are a helpful bot"), false);
+const preFiltered = withSystem.filter((m) => m.role === "user" || m.role === "assistant");
+const sysResult = selectAssistantContext(preFiltered, 5);
+check("system messages are filtered upstream", sysResult.some((m) => m.role === "system"), false);
+
+console.log("\n-- chat-suggestion prompt construction --");
+
+// Empty context (no assistant messages yet) — should produce just system + final user
+const m1 = buildSuggestionMessages([], "Alice", "Bot", 5);
+check("empty context → 2 messages (system + final user)", m1.length, 2);
+check("empty context → first is system", m1[0].role, "system");
+check("empty context → system prompt names user", m1[0].content.includes("Alice"), true);
+check("empty context → system prompt names entity", m1[0].content.includes("Bot"), true);
+check("empty context → system prompt mentions context count", m1[0].content.includes("last 5"), true);
+check("empty context → last is the final user prompt", m1[1].content, "Now write Alice's next message, responding to Bot's most recent reply.");
+
+// A typical 5-exchange context
+const ctx = selectAssistantContext(
+  [
+    { role: "user", content: "Hey, what's up?" },
+    { role: "assistant", content: "Not much. Working on some code." },
+    { role: "user", content: "Cool. Want to grab coffee?" },
+    { role: "assistant", content: "Sure, when?" },
+    { role: "user", content: "How about 3pm?" },
+    { role: "assistant", content: "Sounds good. See you then." },
+  ],
+  5,
+);
+const m2 = buildSuggestionMessages(ctx, "Alice", "Bot", 5);
+check("typical ctx → system + 6 history + final user = 8 messages", m2.length, 8);
+check("typical ctx → system first", m2[0].role, "system");
+check("typical ctx → history starts with user message", m2[1].role, "user");
+check("typical ctx → last history is the most recent assistant", m2[m2.length - 2].role, "assistant");
+check("typical ctx → last assistant content preserved", m2[m2.length - 2].content, "Sounds good. See you then.");
+check("typical ctx → final user prompt last", m2[m2.length - 1].role, "user");
+check("typical ctx → final prompt uses user name", m2[m2.length - 1].content.includes("Alice"), true);
+check("typical ctx → final prompt names entity", m2[m2.length - 1].content.includes("Bot"), true);
 
 // Special characters in user names shouldn't break the prompt
-const m4 = buildSuggestionMessages([{ role: "user", content: "test" }], "O'Brien", "Bot");
+const m4 = buildSuggestionMessages([{ role: "user", content: "test" }, { role: "assistant", content: "ok" }], "O'Brien", "Bot", 5);
 check("apostrophe in user name doesn't crash", m4[0].content.includes("O'Brien"), true);
 
-// Default names when settings are empty — caller (route handler) does the
-// fallback with `|| "You"` / `|| "Assistant"` before calling buildSuggestionMessages.
-const m5 = buildSuggestionMessages([], "You", "Assistant");
+// Default names when settings are empty
+const m5 = buildSuggestionMessages([{ role: "user", content: "x" }, { role: "assistant", content: "y" }], "You", "Assistant", 5);
 check("default user name 'You' surfaces in prompt", m5[0].content.includes("You"), true);
 check("default entity name 'Assistant' surfaces in prompt", m5[0].content.includes("Assistant"), true);
+
+// System prompt mentions contextCount dynamically
+const m6 = buildSuggestionMessages([{ role: "user", content: "x" }, { role: "assistant", content: "y" }], "Alice", "Bot", 3);
+check("contextCount=3 surfaces in prompt", m6[0].content.includes("last 3"), true);
 
 console.log("\n-- contextCount clamping --");
 check("default 5 on undefined", clampContextCount(undefined), 5);

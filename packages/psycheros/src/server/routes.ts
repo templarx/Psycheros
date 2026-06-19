@@ -1416,6 +1416,54 @@ export async function handleChat(
 }
 
 /**
+ * Select the last `assistantCount` assistant messages from a filtered
+ * conversation history, each paired with the user message that immediately
+ * preceded it.
+ *
+ * Walks the messages chronologically backwards, picking assistant messages
+ * until `assistantCount` is reached. For each picked assistant message it
+ * also pulls the immediately preceding user message (if any) so the model
+ * sees the full exchange that prompted that reply.
+ *
+ * Example (assistantCount = 2):
+ *   input:  [U1, A1, U2, A2, U3, A3, U4, A4]
+ *   output: [U3, A3, U4, A4]
+ *
+ * The result always ends with an assistant message (the most recent bot
+ * reply) because the user wants the draft to respond to the latest AI
+ * message. User messages are kept as "in character" / tone references so
+ * the LLM can match the user's style.
+ */
+function selectAssistantContext(
+  filtered: Array<{ role: string; content: string }>,
+  assistantCount: number,
+): Array<{ role: string; content: string }> {
+  const result: Array<{ role: string; content: string }> = [];
+  let picked = 0;
+
+  for (let i = filtered.length - 1; i >= 0 && picked < assistantCount; i--) {
+    const m = filtered[i];
+    if (m.role !== "assistant") continue;
+
+    // Prepend the assistant message itself first, then the preceding user
+    // message — this produces pairs in chronological order [user, assistant]
+    // at the front of the result, while we walk backwards from newest.
+    result.unshift({ role: "assistant", content: String(m.content || "") });
+
+    if (i > 0 && filtered[i - 1].role === "user") {
+      result.unshift({
+        role: "user",
+        content: String(filtered[i - 1].content || ""),
+      });
+    }
+
+    picked++;
+  }
+
+  return result;
+}
+
+/**
  * Handle POST /api/chat-suggestion - Generate a draft user message using the
  * active LLM.
  *
@@ -1425,14 +1473,20 @@ export async function handleChat(
  * Used by the chat input "skill" that lets the LLM draft the user's next
  * message on their behalf. The user can then edit the draft before sending.
  *
+ * Context selection: the `contextCount` parameter controls how many ASSISTANT
+ * messages from the AI Bot are included (default 5). Each of those assistant
+ * messages is paired with the user message that immediately preceded it,
+ * giving the model full exchanges (user → bot) to study. The user messages
+ * serve two purposes: they provide the topic/context for each assistant
+ * reply, and they show the user's writing style so the draft can stay
+ * "in character". The suggested message is always a USER reply responding
+ * to the most recent assistant message in the conversation.
+ *
  * Uses the same active LLM profile as the main chat (model, baseUrl, apiKey,
  * temperature, etc.) so the suggestion tone matches the conversation tone.
- * System prompt is replaced with a short "you are helping the user draft
- * their next message" instruction; the conversation history (last N
- * messages, default 5) is passed through verbatim as context.
  *
  * No streaming, no tools, no persistence — this is a side feature, not
- * a turn in the conversation. Tokens are capped low (~200) for speed.
+ * a turn in the conversation. Tokens are capped low (~300) for speed.
  */
 export async function handleChatSuggestion(
   ctx: RouteContext,
@@ -1470,6 +1524,7 @@ export async function handleChatSuggestion(
 
   // Clamp contextCount to [1, 10], default 5. Anything outside the range
   // is silently clamped so a buggy client can't trigger a huge context pull.
+  // `contextCount` is the number of ASSISTANT messages to include.
   const contextCount = Math.max(
     1,
     Math.min(10, Number(body.contextCount) || 5),
@@ -1489,13 +1544,34 @@ export async function handleChatSuggestion(
     );
   }
 
-  // Pull the last N messages from the conversation history. Filter to
-  // user + assistant roles only — system messages belong to the main chat
-  // loop and would mislead the suggestion prompt.
+  // Pull messages from the conversation history. Filter to user + assistant
+  // roles only — system messages belong to the main chat loop and would
+  // mislead the suggestion prompt.
   const allMessages = ctx.db.getMessages(body.conversationId);
-  const filtered = allMessages
-    .filter((m: { role: string }) => m.role === "user" || m.role === "assistant")
-    .slice(-contextCount);
+  const filtered = allMessages.filter(
+    (m: { role: string }) => m.role === "user" || m.role === "assistant",
+  );
+
+  // Select the last N assistant messages, paired with the user message that
+  // immediately preceded each. This produces full exchanges that show both
+  // sides of the conversation — the user's style for "in character" tone
+  // and the assistant's content for what to respond to.
+  const context = selectAssistantContext(filtered, contextCount);
+
+  if (context.length === 0) {
+    return new Response(
+      JSON.stringify({
+        error: "No assistant messages yet — start a conversation first",
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
 
   // Build a minimal chat-completions messages array. The system prompt
   // tells the model what to do; the rest is verbatim conversation context.
@@ -1507,25 +1583,30 @@ export async function handleChatSuggestion(
     {
       role: "system",
       content:
-        `You are helping ${userName} draft their next reply to ${entityName} in an ongoing chat. ` +
-        `Read the conversation below and write what ${userName} would naturally say next. ` +
+        `You are helping ${userName} draft their next message in response to ` +
+        `${entityName} (the AI Bot). ` +
+        `Below are the last ${contextCount} exchanges from the conversation. ` +
+        `Each exchange shows what ${userName} said and what ${entityName} replied. ` +
+        `Write what ${userName} would naturally say NEXT, on their own behalf, ` +
+        `in response to the most recent ${entityName} reply. ` +
         `Constraints: ` +
         `(1) Output ONLY the message text — no preamble, no quotes, no "Here's a draft:", no role labels. ` +
-        `(2) Stay in character — match the tone, length, and vocabulary ${userName} has been using. ` +
+        `(2) Stay in character — match the tone, length, vocabulary, and style ${userName} has been using in the user messages shown above. ` +
         `(3) Keep it under 150 words unless the conversation clearly warrants more. ` +
-        `(4) If the previous message asked a question, ${userName}'s reply should answer it. ` +
-        `(5) Do not include tool calls, code fences, or markdown structure unless ${userName} has been using them. ` +
-        `(6) Write in the same language as the conversation.`,
+        `(4) The reply should respond to the LAST ${entityName} message (the most recent bot reply). ` +
+        `(5) If the last ${entityName} message asked a question, ${userName}'s reply should answer it. ` +
+        `(6) Do not include tool calls, code fences, or markdown structure unless ${userName} has been using them. ` +
+        `(7) Write in the same language as the conversation.`,
     },
-    ...filtered.map((m: { role: string; content: string }) => ({
+    ...context.map((m: { role: string; content: string }) => ({
       role: m.role,
       content: String(m.content || ""),
     })),
-    // Final user message frames the task explicitly. The model is being
-    // asked to produce the *next user message*, not an assistant reply.
+    // Final user message frames the task explicitly. The model produces
+    // one assistant message (the draft), which we capture as the suggestion.
     {
       role: "user",
-      content: `Now write ${userName}'s next message in this conversation.`,
+      content: `Now write ${userName}'s next message, responding to ${entityName}'s most recent reply.`,
     },
   ];
 
