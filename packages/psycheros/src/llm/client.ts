@@ -631,19 +631,70 @@ export class LLMClient {
 
   /**
    * Handle an error response from the API.
+   *
+   * Reads the body as text first (cloning the response so we can re-parse
+   * as JSON if it looks like JSON). Surfaces the raw text in the error
+   * message when the upstream returns a non-JSON body — many aggregators
+   * (electronhub, openrouter proxies, self-hosted gateways) return
+   * plain-text or empty bodies on model-not-found / rate-limit /
+   * context-length-exceeded, and the previous code swallowed all of that
+   * into "API request failed with status 400" with no clue what was wrong.
    */
   private async handleErrorResponse(response: Response): Promise<never> {
     let errorMessage = `API request failed with status ${response.status}`;
     let errorCode: string | undefined;
+    let rawBody = "";
 
     try {
-      const errorBody = await response.json();
-      if (errorBody.error) {
-        errorMessage = errorBody.error.message || errorMessage;
-        errorCode = errorBody.error.code;
+      // Cap how much of the body we slurp into logs/errors. 4 KB is more
+      // than enough for any real error message; larger bodies are likely
+      // stack traces or HTML error pages from gateways.
+      rawBody = await response.text();
+      const trimmed = rawBody.length > 4096 ? rawBody.slice(0, 4096) + "...[truncated]" : rawBody;
+
+      // Try to parse as JSON first. Most providers return
+      // { "error": { "message": "...", "code": "...", "type": "..." } }
+      // or { "error": "..." } or { "message": "..." } depending on the API.
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(rawBody);
+      } catch {
+        // Body isn't JSON. Fall through with raw text below.
+      }
+
+      if (parsed) {
+        // OpenAI / OpenRouter shape
+        if (parsed.error && typeof parsed.error === "object") {
+          errorMessage = parsed.error.message || parsed.error.type ||
+            parsed.error.code || errorMessage;
+          errorCode = parsed.error.code || parsed.error.type;
+        } else if (parsed.error && typeof parsed.error === "string") {
+          errorMessage = parsed.error;
+        } else if (parsed.message && typeof parsed.message === "string") {
+          // Anthropic shape (also used by some aggregators)
+          errorMessage = parsed.message;
+          errorCode = parsed.type || parsed.code;
+        } else if (parsed.detail && typeof parsed.detail === "string") {
+          // Some gateways wrap the actual message in `detail`
+          errorMessage = parsed.detail;
+        }
+      } else if (trimmed) {
+        // Non-JSON body — surface it directly so the user sees the actual
+        // upstream reason instead of a useless generic status line.
+        // Single-line it for log readability, strip control chars.
+        const oneLine = trimmed.replace(/[\r\n]+/g, " ").trim();
+        if (oneLine) {
+          errorMessage = `${errorMessage}: ${oneLine}`;
+        }
+      }
+      // If body was empty, leave errorMessage as the generic status-line
+      // fallback (response.statusText will already be in there too).
+      if (!rawBody) {
+        errorMessage = `${errorMessage}: ${response.statusText}`;
       }
     } catch {
-      // If we can't parse the error body, use the status text
+      // Body read itself failed (network blip on the error response).
+      // Fall back to status text so we still have something useful.
       errorMessage = `${errorMessage}: ${response.statusText}`;
     }
 
@@ -652,6 +703,12 @@ export class LLMClient {
         errorCode || "none"
       }, message=${errorMessage}`,
     );
+    // If we got a non-JSON body and the generic message didn't absorb it,
+    // log the raw body separately so the actual reason is searchable.
+    if (rawBody && !errorMessage.includes(rawBody.slice(0, 80))) {
+      const preview = rawBody.length > 4096 ? rawBody.slice(0, 4096) + "...[truncated]" : rawBody;
+      console.error(`[LLM] Raw error body: ${preview}`);
+    }
 
     throw new LLMError(errorMessage, errorCode, response.status);
   }
