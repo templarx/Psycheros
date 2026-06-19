@@ -97,6 +97,7 @@ import {
   handleChat,
   handleChatFragment,
   handleChatRetry,
+  handleChatSuggestion,
   handleClearConversationContext,
   handleConnectionsButtplugFragment,
   handleConnectionsDiscordFragment,
@@ -1730,6 +1731,12 @@ export class Server {
     // POST /api/chat/retry - Retry a failed turn without re-persisting user message
     if (method === "POST" && path === "/api/chat/retry") {
       return await handleChatRetry(ctx, request);
+    }
+
+    // POST /api/chat-suggestion - Generate a draft user message via the
+    // active LLM. Used by the chat input "skill" for AI-suggested drafts.
+    if (method === "POST" && path === "/api/chat-suggestion") {
+      return await handleChatSuggestion(ctx, request);
     }
 
     // POST /api/chat - Stream chat response

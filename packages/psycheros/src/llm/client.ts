@@ -389,6 +389,51 @@ export class LLMClient {
   }
 
   /**
+   * Make a non-streaming chat request and return the assistant's content.
+   *
+   * Used for short-form generation tasks where the full response fits in
+   * one shot — chat input suggestion, titles, rewrites, etc. No tool
+   * support (callers that need tools should use chatStream).
+   *
+   * @param messages - Conversation to send
+   * @param options - Temperature / maxTokens overrides
+   * @returns The assistant's content string
+   */
+  async chat(
+    messages: ChatMessage[],
+    options?: { temperature?: number; maxTokens?: number },
+  ): Promise<string> {
+    const request = this.buildRequest(messages, undefined, false, options);
+    const response = await this.makeRequest(request);
+
+    if (!response.ok) {
+      await this.handleErrorResponse(response);
+    }
+
+    const contentType = response.headers.get("Content-Type") || "";
+    if (!contentType.includes("application/json")) {
+      const body = await response.text();
+      throw new LLMError(
+        `Expected JSON response from LLM API but got content-type "${contentType}": ` +
+          (body.length > 200 ? body.slice(0, 200) + "..." : body),
+        "MALFORMED_STREAM",
+      );
+    }
+
+    const json = await response.json();
+    // OpenAI / OpenRouter / most providers: { choices: [{ message: { content: "..." } }] }
+    const content = json?.choices?.[0]?.message?.content;
+    if (typeof content !== "string") {
+      throw new LLMError(
+        "LLM API response did not contain a string at choices[0].message.content — " +
+          JSON.stringify(json).slice(0, 200),
+        "MALFORMED_STREAM",
+      );
+    }
+    return content;
+  }
+
+  /**
    * Read from a stream reader with a stall timeout.
    * If no data arrives within the timeout period, throws an LLMError.
    */

@@ -678,10 +678,123 @@
 }
 
 /* ==========================================================================
-   Input Area
-   ========================================================================== */
+Input Area
+    ========================================================================== */
 .input-area {
   padding: var(--sp-3);
+}
+
+/* Skills bar — sits just above the input row, gives the user one-click
+   access to AI-powered draft helpers. Designed to be extensible — add
+   more .skill-btn elements as more skills are added. */
+.skills-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  flex-wrap: wrap;
+}
+
+.skill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 4px 10px;
+  background: var(--c-bg-raised, transparent);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-sm);
+  color: var(--c-fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.skill-btn:hover {
+  background: var(--c-bg-sunken);
+  color: var(--c-fg);
+  border-color: var(--c-accent-muted);
+}
+
+.skill-btn:active {
+  transform: translateY(1px);
+}
+
+.skill-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.skill-btn[data-loading="1"] {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.skill-btn[data-loading="1"]::after {
+  content: "…";
+  display: inline-block;
+  margin-left: 4px;
+  animation: skill-pulse 1s ease-in-out infinite;
+}
+
+@keyframes skill-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+.skill-btn-label {
+  font-weight: var(--font-weight-medium);
+}
+
+.skills-bar-hint {
+  color: var(--c-fg-muted);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  opacity: 0.6;
+  margin-left: auto;
+}
+
+/* Draft indicator — appears below the skills bar when an AI-generated
+   draft is in the input box. Subtle styling so it doesn't distract. */
+.skill-draft-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--c-accent-muted, #7e22ce) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--c-accent-muted, #7e22ce) 30%, transparent);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+}
+
+.skill-draft-label {
+  color: var(--c-accent, #a855f7);
+  font-weight: var(--font-weight-semibold);
+}
+
+.skill-draft-hint {
+  color: var(--c-fg-muted);
+  flex: 1;
+}
+
+.skill-draft-discard {
+  background: transparent;
+  border: none;
+  color: var(--c-fg-muted);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.skill-draft-discard:hover {
+  color: var(--c-error, #c33);
 }
 
 .input-container {

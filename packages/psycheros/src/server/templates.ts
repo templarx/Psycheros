@@ -1999,6 +1999,20 @@ export function renderEmptyState(): string {
  */
 export function renderInputArea(): string {
   return `<div class="input-area">
+  <div class="skills-bar" id="skills-bar">
+    <button type="button" class="skill-btn" id="skill-suggest" title="Draft a message using the active AI (uses the last 5 messages as context). Shortcut: Ctrl+J" data-skill="suggest">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4-6.2-4.5-6.2 4.5 2.4-7.4L2 9.4h7.6z"/>
+      </svg>
+      <span class="skill-btn-label">Suggest</span>
+    </button>
+    <span class="skills-bar-hint">AI skills</span>
+  </div>
+  <div class="skill-draft-bar" id="skill-draft-bar" style="display:none;">
+    <span class="skill-draft-label">Draft from AI:</span>
+    <span class="skill-draft-hint">edit and send, or</span>
+    <button type="button" class="skill-draft-discard" id="skill-draft-discard" title="Discard the AI draft">discard</button>
+  </div>
   <div class="input-container">
     <label class="attach-btn" title="Attach image" style="position:relative;overflow:hidden;cursor:pointer;">
       <input type="file" id="attach-input" accept="image/*" style="position:absolute;inset:0;opacity:0;cursor:pointer;" onchange="Psycheros.handleAttachment(this)" />

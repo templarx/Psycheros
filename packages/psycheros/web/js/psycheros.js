@@ -1024,8 +1024,177 @@ function handleKeyDown(event) {
   if (event.key === 'Enter' && !event.shiftKey && !isMobileDevice()) {
     event.preventDefault();
     sendMessage();
+    return;
+  }
+  // Ctrl/Cmd+J — trigger AI suggestion skill
+  if ((event.ctrlKey || event.metaKey) && event.key === 'j' &&
+      !event.shiftKey && !event.altKey) {
+    event.preventDefault();
+    requestSuggestionDraft();
+    return;
   }
 }
+
+// =============================================================================
+// Skills bar
+// =============================================================================
+// Each skill is an AI-powered helper that acts on the chat input. The first
+// skill is "Suggest" — generate a draft of what the user might say next,
+// using the last few messages as context. Drafts are placed in the input
+// box for the user to edit before sending.
+//
+// Future skills (rewrite, translate, summarize last reply, etc.) should
+// follow the same lifecycle:
+//   1. Wire button onclick -> handler in psycheros.js
+//   2. Server endpoint in src/server/routes.ts (POST /api/skill-<name>)
+//   3. Optionally: a new .skill-btn element in templates.ts
+
+/**
+ * Track the active AI suggestion draft so we can show/hide the draft bar
+ * and clear it on send or discard.
+ */
+let activeDraftSuggestion = null;
+
+function setDraftBarVisible(visible) {
+  const bar = document.getElementById('skill-draft-bar');
+  if (bar) bar.style.display = visible ? 'flex' : 'none';
+}
+
+/**
+ * Trigger the AI-suggest skill: ask the server for a draft user message
+ * derived from the last 5 messages, drop it into the input box, and
+ * show the draft indicator. Idempotent — calling it again while a draft
+ * is already loading is a no-op.
+ */
+async function requestSuggestionDraft() {
+  const input = document.getElementById('message-input');
+  const btn = document.getElementById('skill-suggest');
+  if (!input || !btn) return;
+
+  // Don't generate a draft if one is already in flight or already shown —
+  // user clicks again to discard first, or edits then re-requests.
+  if (btn.dataset.loading === '1') return;
+  if (activeDraftSuggestion !== null) {
+    // A draft is already visible — toggle it off (discard on second click).
+    discardSuggestionDraft();
+    return;
+  }
+
+  if (!currentConversationId) {
+    showToast('Open or start a conversation first', 'warning');
+    return;
+  }
+
+  btn.dataset.loading = '1';
+  // Preserve cursor position so any in-progress typing isn't disrupted
+  const cursorPos = input.selectionStart;
+
+  try {
+    const resp = await fetch('/api/chat-suggestion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        conversationId: currentConversationId,
+        contextCount: 5,
+      }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      const msg = data?.error || `Suggestion failed (HTTP ${resp.status})`;
+      showToast(msg, 'error');
+      return;
+    }
+    if (data.error) {
+      // Server returned 200 but with a structured error payload (LLM failure).
+      showToast(
+        data.errorDetail ? `${data.error}\n${data.errorDetail}` : data.error,
+        'error',
+      );
+      return;
+    }
+    const draft = String(data.suggestion || '').trim();
+    if (!draft) {
+      showToast('AI returned an empty draft', 'warning');
+      return;
+    }
+
+    // Insert the draft. If the user has already started typing, append
+    // the draft to their existing text with a separator.
+    const existing = input.value;
+    const separator = existing.trim() ? '\n\n' : '';
+    input.value = existing + separator + draft;
+    activeDraftSuggestion = draft;
+
+    // Show the draft indicator bar
+    setDraftBarVisible(true);
+
+    // Focus + place cursor at end so the user can edit immediately.
+    autoResize(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+
+    // Restore the user's original cursor position only if it was past the
+    // separator we inserted. We can't reliably restore the original
+    // position because the draft text is now appended, but the focus +
+    // setSelectionRange to end is the more useful UX.
+    void cursorPos;
+  } catch (err) {
+    console.error('[Skill] Suggestion failed:', err);
+    showToast('Could not reach the AI service for a draft', 'error');
+  } finally {
+    delete btn.dataset.loading;
+  }
+}
+
+function discardSuggestionDraft() {
+  const input = document.getElementById('message-input');
+  if (input && activeDraftSuggestion !== null) {
+    // Strip the draft we added. We appended `<existing>\n\n<draft>`, so
+    // find and remove the trailing draft block.
+    const v = input.value;
+    const draft = activeDraftSuggestion;
+    if (v.endsWith(draft)) {
+      let stripped = v.slice(0, v.length - draft.length);
+      // Also strip the \n\n separator we added (if any).
+      if (stripped.endsWith('\n\n')) stripped = stripped.slice(0, -2);
+      else if (stripped.endsWith('\n')) stripped = stripped.slice(0, -1);
+      input.value = stripped;
+    }
+    autoResize(input);
+    input.focus();
+  }
+  activeDraftSuggestion = null;
+  setDraftBarVisible(false);
+}
+
+/**
+ * Called by sendMessage() right before the user message is sent. Clears
+ * the active draft so the indicator bar hides after the message is
+ * delivered.
+ */
+function clearActiveDraft() {
+  activeDraftSuggestion = null;
+  setDraftBarVisible(false);
+}
+
+// Wire up skill buttons on initial load (delegated, since HTMX may
+// re-render the input area when navigating between conversations).
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.skill-btn');
+  if (!btn) return;
+  const skill = btn.dataset.skill;
+  if (skill === 'suggest') {
+    requestSuggestionDraft();
+  }
+  // Future skills: switch on btn.dataset.skill and route to their handlers.
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('#skill-draft-discard')) {
+    e.preventDefault();
+    discardSuggestionDraft();
+  }
+});
 
 // Track if stop button has been pressed once (for double-tap confirmation)
 let stopConfirmed = false;
@@ -1213,6 +1382,11 @@ async function sendMessage() {
   const message = input?.value.trim();
 
   if ((!message && !pendingAttachmentId) || isStreaming || pulseStreamingPulseId) return;
+
+  // Clear any active AI-suggestion draft — the message is being sent,
+  // so the draft indicator should hide. The actual text we send is
+  // already in `message` regardless.
+  clearActiveDraft();
 
   // Create conversation if needed
   if (!currentConversationId) {

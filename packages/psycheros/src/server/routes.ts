@@ -1416,6 +1416,165 @@ export async function handleChat(
 }
 
 /**
+ * Handle POST /api/chat-suggestion - Generate a draft user message using the
+ * active LLM.
+ *
+ * Body: { conversationId: string, contextCount?: number (1-10, default 5) }
+ * Response: { suggestion: string }
+ *
+ * Used by the chat input "skill" that lets the LLM draft the user's next
+ * message on their behalf. The user can then edit the draft before sending.
+ *
+ * Uses the same active LLM profile as the main chat (model, baseUrl, apiKey,
+ * temperature, etc.) so the suggestion tone matches the conversation tone.
+ * System prompt is replaced with a short "you are helping the user draft
+ * their next message" instruction; the conversation history (last N
+ * messages, default 5) is passed through verbatim as context.
+ *
+ * No streaming, no tools, no persistence — this is a side feature, not
+ * a turn in the conversation. Tokens are capped low (~200) for speed.
+ */
+export async function handleChatSuggestion(
+  ctx: RouteContext,
+  request: Request,
+): Promise<Response> {
+  let body: { conversationId?: string; contextCount?: number };
+  try {
+    body = await request.json();
+  } catch (error) {
+    console.error("[Routes] handleChatSuggestion parse error:", error);
+    return new Response(
+      JSON.stringify({ error: "Invalid request body" }),
+      {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+
+  if (!body.conversationId || typeof body.conversationId !== "string") {
+    return new Response(
+      JSON.stringify({ error: "Missing or invalid conversationId" }),
+      {
+        status: 400,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+
+  // Clamp contextCount to [1, 10], default 5. Anything outside the range
+  // is silently clamped so a buggy client can't trigger a huge context pull.
+  const contextCount = Math.max(
+    1,
+    Math.min(10, Number(body.contextCount) || 5),
+  );
+
+  const conversation = ctx.db.getConversation(body.conversationId);
+  if (!conversation) {
+    return new Response(
+      JSON.stringify({ error: "Conversation not found" }),
+      {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+
+  // Pull the last N messages from the conversation history. Filter to
+  // user + assistant roles only — system messages belong to the main chat
+  // loop and would mislead the suggestion prompt.
+  const allMessages = ctx.db.getMessages(body.conversationId);
+  const filtered = allMessages
+    .filter((m: { role: string }) => m.role === "user" || m.role === "assistant")
+    .slice(-contextCount);
+
+  // Build a minimal chat-completions messages array. The system prompt
+  // tells the model what to do; the rest is verbatim conversation context.
+  const displayNames = await loadGeneralSettings(ctx.dataRoot);
+  const userName = displayNames.userName || "You";
+  const entityName = displayNames.entityName || "Assistant";
+
+  const messages = [
+    {
+      role: "system",
+      content:
+        `You are helping ${userName} draft their next reply to ${entityName} in an ongoing chat. ` +
+        `Read the conversation below and write what ${userName} would naturally say next. ` +
+        `Constraints: ` +
+        `(1) Output ONLY the message text — no preamble, no quotes, no "Here's a draft:", no role labels. ` +
+        `(2) Stay in character — match the tone, length, and vocabulary ${userName} has been using. ` +
+        `(3) Keep it under 150 words unless the conversation clearly warrants more. ` +
+        `(4) If the previous message asked a question, ${userName}'s reply should answer it. ` +
+        `(5) Do not include tool calls, code fences, or markdown structure unless ${userName} has been using them. ` +
+        `(6) Write in the same language as the conversation.`,
+    },
+    ...filtered.map((m: { role: string; content: string }) => ({
+      role: m.role,
+      content: String(m.content || ""),
+    })),
+    // Final user message frames the task explicitly. The model is being
+    // asked to produce the *next user message*, not an assistant reply.
+    {
+      role: "user",
+      content: `Now write ${userName}'s next message in this conversation.`,
+    },
+  ];
+
+  try {
+    // Cap tokens low for speed — a chat suggestion rarely needs more than
+    // ~200 tokens. We pass maxTokens explicitly so this doesn't fight the
+    // user's profile setting which is tuned for full assistant turns.
+    const raw = await ctx.llm.chat(messages, { maxTokens: 300 });
+    const suggestion = raw.trim();
+
+    return new Response(
+      JSON.stringify({ suggestion }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  } catch (error) {
+    // Surface the LLM error through the same payload shape we use for
+    // streaming errors so the client can render the same UI.
+    const errorCode = (error as { code?: string })?.code || "UNKNOWN";
+    const statusCode = (error as { statusCode?: number })?.statusCode;
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    console.error(
+      `[Routes] Chat suggestion error — code=${errorCode}` +
+        (statusCode ? `, http=${statusCode}` : "") + `: ${errorMsg}`,
+    );
+
+    const payload = buildChatErrorPayload(errorCode, statusCode, errorMsg);
+    return new Response(
+      JSON.stringify(payload),
+      {
+        status: 200, // 200 because the request itself succeeded; the
+                      // failure is in the suggested content, not the API
+                      // call. Client renders the error the same way it
+                      // does for streaming errors.
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+}
+
+/**
  * Handle POST /api/chat/retry - Retry a failed turn without re-persisting the user message
  *
  * When a turn fails (e.g. rate limit), the user message is already in the DB.
