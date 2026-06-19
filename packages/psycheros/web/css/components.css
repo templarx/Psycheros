@@ -708,6 +708,7 @@ Input Area
   font-size: var(--font-size-xs);
   cursor: pointer;
   transition: all 0.15s ease;
+  min-width: 90px; /* prevents width jump when label changes */
 }
 
 .skill-btn:hover {
@@ -725,21 +726,52 @@ Input Area
   cursor: not-allowed;
 }
 
-.skill-btn[data-loading="1"] {
-  pointer-events: none;
-  opacity: 0.6;
+/* Three states share the same button — we swap visibility of the
+   icon + label pair via the data-state attribute on the button. */
+.skill-btn .skill-btn-icon-busy,
+.skill-btn .skill-btn-label-busy,
+.skill-btn .skill-btn-label-cancel {
+  display: none;
 }
 
-.skill-btn[data-loading="1"]::after {
-  content: "…";
-  display: inline-block;
-  margin-left: 4px;
-  animation: skill-pulse 1s ease-in-out infinite;
+.skill-btn[data-state="loading"] .skill-btn-icon-idle,
+.skill-btn[data-state="loading"] .skill-btn-label-idle {
+  display: none;
 }
 
-@keyframes skill-pulse {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
+.skill-btn[data-state="loading"] .skill-btn-icon-busy,
+.skill-btn[data-state="loading"] .skill-btn-label-busy {
+  display: inline-flex;
+  color: var(--c-accent, #a855f7);
+}
+
+.skill-btn[data-state="ready"] .skill-btn-icon-idle,
+.skill-btn[data-state="ready"] .skill-btn-label-idle {
+  display: none;
+}
+
+.skill-btn[data-state="ready"] .skill-btn-icon-busy,
+.skill-btn[data-state="ready"] .skill-btn-label-cancel {
+  display: inline-flex;
+  color: var(--c-warning, #f59e0b);
+}
+
+.skill-btn[data-state="loading"] {
+  border-color: var(--c-accent, #a855f7);
+  background: color-mix(in srgb, var(--c-accent, #a855f7) 8%, transparent);
+}
+
+.skill-btn[data-state="ready"] {
+  border-color: var(--c-warning, #f59e0b);
+  background: color-mix(in srgb, var(--c-warning, #f59e0b) 8%, transparent);
+}
+
+.skill-btn-spinner {
+  animation: skill-spin 0.9s linear infinite;
+}
+
+@keyframes skill-spin {
+  to { transform: rotate(360deg); }
 }
 
 .skill-btn-label {
@@ -831,6 +863,26 @@ Input Area
   border-color: var(--c-accent);
   outline: none;
   box-shadow: 0 0 0 3px var(--c-accent-subtle), var(--glow-accent);
+}
+
+/* Locked input — used by skills while a request is in flight. Visual
+   treatment (dim cursor, accent border) makes the disabled state
+   obvious without removing the field from the layout. The actual
+   `disabled` attribute is also set so the textarea can't receive
+   focus or typing. */
+.input-field[data-locked="1"],
+.input-field:disabled {
+  background-color: color-mix(in srgb, var(--c-accent, #a855f7) 4%, var(--c-bg-sunken));
+  border-color: var(--c-accent-muted);
+  color: var(--c-fg-muted);
+  cursor: progress;
+}
+
+.input-field[data-locked="1"]:focus {
+  /* Override the normal focus ring — keep the accent border but drop
+     the glow so it doesn't look interactive. */
+  border-color: var(--c-accent-muted);
+  box-shadow: none;
 }
 
 .send-btn {

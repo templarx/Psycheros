@@ -1055,65 +1055,149 @@ function handleKeyDown(event) {
  */
 let activeDraftSuggestion = null;
 
+/**
+ * In-flight AbortController for the suggestion request. Stored on the
+ * closure so a second click on the button while loading can cancel it.
+ */
+let suggestionAbortController = null;
+
 function setDraftBarVisible(visible) {
   const bar = document.getElementById('skill-draft-bar');
   if (bar) bar.style.display = visible ? 'flex' : 'none';
 }
 
 /**
- * Trigger the AI-suggest skill: ask the server for a draft user message
- * derived from the last 5 messages, drop it into the input box, and
- * show the draft indicator. Idempotent — calling it again while a draft
- * is already loading is a no-op.
+ * Update the Suggest button's data-state (drives the CSS spinner / label
+ * swap) and lock or unlock the input box.
+ *
+ * States:
+ *   "idle"    — initial; star icon + "Suggest" label
+ *   "loading" — request in flight; spinner + "Generating…" label; input
+ *               is locked (disabled + cursor:progress) so the user can't
+ *               type into it during generation
+ *   "ready"   — a draft has been inserted into the input box; spinner +
+ *               "Discard" label; clicking now removes the draft
+ */
+function setSkillState(state) {
+  const btn = document.getElementById('skill-suggest');
+  if (btn) btn.dataset.state = state;
+  const input = document.getElementById('message-input');
+  if (input) {
+    if (state === 'loading') {
+      input.setAttribute('disabled', 'disabled');
+      input.setAttribute('data-locked', '1');
+      input.setAttribute('aria-busy', 'true');
+    } else {
+      input.removeAttribute('disabled');
+      input.removeAttribute('data-locked');
+      input.removeAttribute('aria-busy');
+    }
+  }
+}
+
+/**
+ * Trigger the AI-suggest skill. State machine:
+ *   idle    → click → loading → success → ready | cancel click → idle | error → idle
+ *   loading → click → cancel the in-flight request, back to idle
+ *   ready   → click → discard the draft, back to idle
+ *
+ * The input box is locked while loading so the user can't race with the
+ * generation. Stale responses (user navigated to a different conversation
+ * mid-flight) are dropped silently.
  */
 async function requestSuggestionDraft() {
   const input = document.getElementById('message-input');
   const btn = document.getElementById('skill-suggest');
-  if (!input || !btn) return;
+  if (!input || !btn) {
+    console.warn('[Skill] Suggest: required DOM not found', {
+      input: !!input,
+      btn: !!btn,
+    });
+    return;
+  }
 
-  // Don't generate a draft if one is already in flight or already shown —
-  // user clicks again to discard first, or edits then re-requests.
-  if (btn.dataset.loading === '1') return;
+  // If a request is already in flight, this click cancels it.
+  if (suggestionAbortController) {
+    console.log('[Skill] Suggest: cancelling in-flight request');
+    suggestionAbortController.abort('user-cancelled');
+    return;
+  }
+
+  // If a draft is currently visible (not generating), clicking discards it.
   if (activeDraftSuggestion !== null) {
-    // A draft is already visible — toggle it off (discard on second click).
+    console.log('[Skill] Suggest: discarding visible draft');
     discardSuggestionDraft();
     return;
   }
 
   if (!currentConversationId) {
+    console.warn('[Skill] Suggest: no active conversation');
     showToast('Open or start a conversation first', 'warning');
     return;
   }
 
-  btn.dataset.loading = '1';
-  // Preserve cursor position so any in-progress typing isn't disrupted
-  const cursorPos = input.selectionStart;
+  // Lock the input + flip the button to its busy state.
+  setSkillState('loading');
+  suggestionAbortController = new AbortController();
+  const signal = suggestionAbortController.signal;
+  const conversationIdAtStart = currentConversationId;
+
+  console.log(
+    '[Skill] Suggest: requesting draft for conversation',
+    conversationIdAtStart,
+  );
 
   try {
     const resp = await fetch('/api/chat-suggestion', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        conversationId: currentConversationId,
+        conversationId: conversationIdAtStart,
         contextCount: 5,
       }),
+      signal,
     });
-    const data = await resp.json();
+
+    const data = await resp.json().catch((e) => {
+      console.error('[Skill] Suggest: failed to parse JSON response', e);
+      return {};
+    });
+
+    // If the user navigated away mid-request, drop the result.
+    if (currentConversationId !== conversationIdAtStart) {
+      console.log(
+        '[Skill] Suggest: conversation changed mid-request, dropping result',
+      );
+      return;
+    }
+
     if (!resp.ok) {
       const msg = data?.error || `Suggestion failed (HTTP ${resp.status})`;
+      console.error(
+        '[Skill] Suggest: server error',
+        resp.status,
+        msg,
+        data,
+      );
       showToast(msg, 'error');
       return;
     }
     if (data.error) {
       // Server returned 200 but with a structured error payload (LLM failure).
-      showToast(
-        data.errorDetail ? `${data.error}\n${data.errorDetail}` : data.error,
-        'error',
+      const fullMsg = data.errorDetail
+        ? `${data.error}\n${data.errorDetail}`
+        : data.error;
+      console.error(
+        '[Skill] Suggest: LLM error',
+        data.errorCode,
+        data.errorDetail,
       );
+      showToast(fullMsg, 'error');
       return;
     }
     const draft = String(data.suggestion || '').trim();
     if (!draft) {
+      console.warn('[Skill] Suggest: empty draft returned');
       showToast('AI returned an empty draft', 'warning');
       return;
     }
@@ -1125,24 +1209,38 @@ async function requestSuggestionDraft() {
     input.value = existing + separator + draft;
     activeDraftSuggestion = draft;
 
-    // Show the draft indicator bar
+    // Show the draft indicator bar.
     setDraftBarVisible(true);
+
+    // Flip the button into "ready" mode (Discard label). The input is
+    // unlocked because the user can now edit the draft.
+    setSkillState('ready');
 
     // Focus + place cursor at end so the user can edit immediately.
     autoResize(input);
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
-
-    // Restore the user's original cursor position only if it was past the
-    // separator we inserted. We can't reliably restore the original
-    // position because the draft text is now appended, but the focus +
-    // setSelectionRange to end is the more useful UX.
-    void cursorPos;
+    console.log('[Skill] Suggest: draft inserted (', draft.length, 'chars)');
   } catch (err) {
-    console.error('[Skill] Suggestion failed:', err);
-    showToast('Could not reach the AI service for a draft', 'error');
+    if (err && (err.name === 'AbortError' || String(err).includes('aborted'))) {
+      console.log('[Skill] Suggest: request was cancelled');
+      // User-initiated cancel — no toast, just go back to idle.
+      return;
+    }
+    console.error('[Skill] Suggest: fetch failed', err);
+    showToast(
+      'Could not reach the AI service for a draft: ' +
+        (err instanceof Error ? err.message : String(err)),
+      'error',
+    );
   } finally {
-    delete btn.dataset.loading;
+    suggestionAbortController = null;
+    // Only reset to idle if we didn't transition to ready. If a draft
+    // was inserted, setSkillState('ready') ran in the try block and we
+    // don't want to clobber it.
+    if (btn.dataset.state === 'loading') {
+      setSkillState('idle');
+    }
   }
 }
 
@@ -1165,6 +1263,7 @@ function discardSuggestionDraft() {
   }
   activeDraftSuggestion = null;
   setDraftBarVisible(false);
+  setSkillState('idle');
 }
 
 /**
@@ -1177,24 +1276,10 @@ function clearActiveDraft() {
   setDraftBarVisible(false);
 }
 
-// Wire up skill buttons on initial load (delegated, since HTMX may
-// re-render the input area when navigating between conversations).
-document.addEventListener('click', (e) => {
-  const btn = e.target.closest('.skill-btn');
-  if (!btn) return;
-  const skill = btn.dataset.skill;
-  if (skill === 'suggest') {
-    requestSuggestionDraft();
-  }
-  // Future skills: switch on btn.dataset.skill and route to their handlers.
-});
-
-document.addEventListener('click', (e) => {
-  if (e.target.closest('#skill-draft-discard')) {
-    e.preventDefault();
-    discardSuggestionDraft();
-  }
-});
+// (Skill buttons use inline `onclick="Psycheros.requestSuggestionDraft()"`
+// and `onclick="Psycheros.discardSuggestionDraft()"`. Inline handlers are
+// used so the JS is directly invokable from devtools and so that HTMX
+// partial re-renders of the input area don't lose the binding.)
 
 // Track if stop button has been pressed once (for double-tap confirmation)
 let stopConfirmed = false;
@@ -4563,6 +4648,9 @@ globalThis.Psycheros = {
   stopGeneration,
   requestStopPulseGeneration,
   stopPulseGeneration,
+  // Skills bar (AI-assisted drafting)
+  requestSuggestionDraft,
+  discardSuggestionDraft,
   // Selection mode
   enterSelectionMode,
   exitSelectionMode,
