@@ -1074,6 +1074,20 @@
   animation: pulse 2s ease-in-out infinite;
 }
 
+/* Secondary error detail line — the actual upstream reason (e.g.
+   "model glm-5.2 not found in provider catalog"). Smaller, dimmer,
+   monospace to distinguish from the friendly primary error line. */
+.status.error-detail {
+  margin-top: var(--sp-1);
+  margin-bottom: 0;
+  color: var(--c-fg-muted);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-mono);
+  font-style: italic;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 .retry-btn {
   display: block;
   margin: var(--sp-2) auto 0;

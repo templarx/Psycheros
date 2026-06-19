@@ -1888,11 +1888,25 @@ function handleSSEEvent(eventType, data, messageEl, state) {
           // Remove retry indicator if present — we've moved past it
           const retryEl = contentContainer.querySelector('.status-retry');
           if (retryEl) retryEl.remove();
+
+          // Primary error line (friendly category message)
           const errorEl = document.createElement('div');
           errorEl.className = 'status error';
           errorEl.style.color = 'var(--c-error)';
           errorEl.textContent = status.error;
           contentContainer.appendChild(errorEl);
+
+          // Secondary detail line (actual upstream reason, when present).
+          // Server only sends this for 4xx client/config errors where the
+          // user genuinely needs to know the underlying reason (model not
+          // found, invalid parameter, quota exceeded). 5xx / timeouts don't
+          // get this — the upstream text there is usually noise.
+          if (status.errorDetail) {
+            const detailEl = document.createElement('div');
+            detailEl.className = 'status error-detail';
+            detailEl.textContent = status.errorDetail;
+            contentContainer.appendChild(detailEl);
+          }
 
           // Show retry button if no assistant text content was produced this turn.
           // Tool cards are intermediate steps in the agentic loop, not a final
@@ -1909,7 +1923,12 @@ function handleSSEEvent(eventType, data, messageEl, state) {
             contentContainer.appendChild(retryBtn);
           }
 
-          showToast(status.error);
+          // Toast: include both lines for the most informative notification.
+          // The detail is appended on a new line so the toast can wrap.
+          const toastMsg = status.errorDetail
+            ? `${status.error}\n${status.errorDetail}`
+            : status.error;
+          showToast(toastMsg);
         }
       } catch {
         // Fallback for non-JSON status messages

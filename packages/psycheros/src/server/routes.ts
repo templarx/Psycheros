@@ -1126,6 +1126,94 @@ interface RetryChatRequestBody {
  * @param request - HTTP Request with body { conversationId: string, message: string }
  * @returns HTTP Response with SSE stream
  */
+
+/**
+ * Build the user-facing status payload for an LLM stream error.
+ *
+ * Returns:
+ *   - error:       friendly category message, suitable for toast + main inline
+ *   - errorCode:   structured code (UNKNOWN / NETWORK_ERROR / HTTP_<status>)
+ *   - errorDetail: the actual upstream error message (only for 4xx — config/
+ *                  client issues the user can act on; never for 5xx/429/
+ *                  timeouts where the upstream text is noise like
+ *                  "upstream request timeout").
+ *
+ * The detail is capped at 280 chars and HTML-escaped so it can be safely
+ * injected into the chat UI as a second line under the main error.
+ */
+function buildChatErrorPayload(
+  errorCode: string,
+  statusCode: number | undefined,
+  rawMessage: string,
+): { error: string; errorCode: string; errorDetail?: string } {
+  let primary: string;
+  let detail: string | undefined;
+
+  switch (errorCode) {
+    case "CONNECT_TIMEOUT":
+      primary =
+        "The AI service is unreachable or failed to respond. It may be temporarily unavailable — please try again.";
+      break;
+    case "STREAM_STALL_TIMEOUT":
+      primary =
+        "The AI response stalled mid-stream. The service may be overloaded — please try again.";
+      break;
+    case "NETWORK_ERROR":
+      primary =
+        "Could not reach the AI service. Please check your connection and try again.";
+      break;
+    case "MALFORMED_STREAM":
+      primary = "Received corrupted data from the AI service. Please try again.";
+      break;
+    default:
+      // For HTTP errors, prefer a status-aware message
+      if (statusCode && statusCode >= 500) {
+        primary =
+          `The AI service returned an error (HTTP ${statusCode}). Please try again later.`;
+      } else if (statusCode === 429) {
+        primary =
+          "Rate limited by the AI service. Please wait a moment and try again.";
+      } else if (statusCode === 401 || statusCode === 403) {
+        primary =
+          "Authentication error with the AI service. Check your API key configuration.";
+      } else if (statusCode === 400 || statusCode === 404) {
+        primary =
+          `The AI service rejected the request (HTTP ${statusCode}). This is usually a model name, parameter, or quota issue.`;
+      } else {
+        primary = "An error occurred while processing your message.";
+      }
+      break;
+  }
+
+  // Surface the upstream message only for 4xx client/config errors — those
+  // are the cases where the user genuinely needs to know what went wrong
+  // (model not found, invalid parameter, quota exceeded, etc.). For 5xx,
+  // 429, 401/403 (auth errors that may leak key fragments), and timeouts
+  // the upstream text is usually noise or a privacy risk.
+  const isClientError = statusCode !== undefined && statusCode >= 400 &&
+    statusCode < 500 &&
+    statusCode !== 429 &&
+    statusCode !== 401 &&
+    statusCode !== 403;
+  if (isClientError && rawMessage) {
+    // Strip the generic "API request failed with status 400: " prefix
+    // that handleErrorResponse adds when the body isn't JSON.
+    let cleaned = rawMessage
+      .replace(/^API request failed with status \d+:\s*/i, "")
+      .trim();
+    // Cap at 280 chars so it fits in a single toast line
+    if (cleaned.length > 280) cleaned = cleaned.slice(0, 277) + "...";
+    if (cleaned) detail = cleaned;
+  }
+
+  const payload: { error: string; errorCode: string; errorDetail?: string } = {
+    error: primary,
+    errorCode,
+  };
+  if (detail) payload.errorDetail = detail;
+  return payload;
+}
+
 export async function handleChat(
   ctx: RouteContext,
   request: Request,
@@ -1295,45 +1383,16 @@ export async function handleChat(
         );
 
         // Build a user-facing message that includes the error category
-        // without leaking sensitive internal details
-        let userMessage: string;
-        switch (errorCode) {
-          case "CONNECT_TIMEOUT":
-            userMessage =
-              "The AI service is unreachable or failed to respond. It may be temporarily unavailable — please try again.";
-            break;
-          case "STREAM_STALL_TIMEOUT":
-            userMessage =
-              "The AI response stalled mid-stream. The service may be overloaded — please try again.";
-            break;
-          case "NETWORK_ERROR":
-            userMessage =
-              "Could not reach the AI service. Please check your connection and try again.";
-            break;
-          case "MALFORMED_STREAM":
-            userMessage =
-              "Received corrupted data from the AI service. Please try again.";
-            break;
-          default:
-            if (statusCode && statusCode >= 500) {
-              userMessage =
-                `The AI service returned an error (HTTP ${statusCode}). Please try again later.`;
-            } else if (statusCode === 429) {
-              userMessage =
-                "Rate limited by the AI service. Please wait a moment and try again.";
-            } else if (statusCode === 401 || statusCode === 403) {
-              userMessage =
-                "Authentication error with the AI service. Check your API key configuration.";
-            } else {
-              userMessage = "An error occurred while processing your message.";
-            }
-            break;
-        }
+        // and, for 4xx client/config errors, the actual upstream reason
+        // (e.g. "model glm-5.2 not found in provider catalog").
+        const errorPayload = buildChatErrorPayload(errorCode, statusCode, errorMsg);
 
-        // Send error as a status event with descriptive message and code
+        // Send error as a status event with descriptive message, structured
+        // code, and the upstream detail (when present) for the client to
+        // render as a second line.
         controller.enqueue({
           type: "status",
-          data: JSON.stringify({ error: userMessage, errorCode }),
+          data: JSON.stringify(errorPayload),
         });
 
         // Send done event
@@ -1474,43 +1533,11 @@ export async function handleChatRetry(
             `: ${errorMsg}`,
         );
 
-        let userMessage: string;
-        switch (errorCode) {
-          case "CONNECT_TIMEOUT":
-            userMessage =
-              "The AI service is unreachable or failed to respond. It may be temporarily unavailable — please try again.";
-            break;
-          case "STREAM_STALL_TIMEOUT":
-            userMessage =
-              "The AI response stalled mid-stream. The service may be overloaded — please try again.";
-            break;
-          case "NETWORK_ERROR":
-            userMessage =
-              "Could not reach the AI service. Please check your connection and try again.";
-            break;
-          case "MALFORMED_STREAM":
-            userMessage =
-              "Received corrupted data from the AI service. Please try again.";
-            break;
-          default:
-            if (statusCode && statusCode >= 500) {
-              userMessage =
-                `The AI service returned an error (HTTP ${statusCode}). Please try again later.`;
-            } else if (statusCode === 429) {
-              userMessage =
-                "Rate limited by the AI service. Please wait a moment and try again.";
-            } else if (statusCode === 401 || statusCode === 403) {
-              userMessage =
-                "Authentication error with the AI service. Check your API key configuration.";
-            } else {
-              userMessage = "An error occurred while processing your message.";
-            }
-            break;
-        }
+        const errorPayload = buildChatErrorPayload(errorCode, statusCode, errorMsg);
 
         controller.enqueue({
           type: "status",
-          data: JSON.stringify({ error: userMessage, errorCode }),
+          data: JSON.stringify(errorPayload),
         });
         controller.enqueue({ type: "done", data: "error" });
       } finally {
